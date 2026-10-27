@@ -1,4 +1,4 @@
-﻿// Procedures: the Process Manager export (activities > tasks > actions), read so a session can follow one: the checklist shown while recording and the slide pack.
+﻿// Procedures: the Process Manager export (activities > tasks > actions) read into something ClickBot can teach and replay.
 // One session is made per activity; its tasks become the groups of the session; every action says whether Claude only
 // clicks, enters a value, or chooses an option, and the values are asked for before Claude starts.
 using System;
@@ -56,33 +56,11 @@ namespace SnapLite
 
     static class ProcedureFile
     {
-        // CSV with a header row naming the inputs; quotes and commas inside quotes are handled
-        public static List<Dictionary<string, string>> ParseCsv(string path)
-        {
-            var text = File.ReadAllText(path, Encoding.UTF8).TrimStart('﻿');
-            var rows = new List<List<string>>(); var cur = new List<string>(); var sb = new StringBuilder(); bool q = false;
-            for (int i = 0; i < text.Length; i++)
-            {
-                char c = text[i];
-                if (q) { if (c == '"') { if (i + 1 < text.Length && text[i + 1] == '"') { sb.Append('"'); i++; } else q = false; } else sb.Append(c); }
-                else if (c == '"') q = true;
-                else if (c == ',') { cur.Add(sb.ToString()); sb.Length = 0; }
-                else if (c == '\n' || c == '\r') { if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++; cur.Add(sb.ToString()); sb.Length = 0; rows.Add(cur); cur = new List<string>(); }
-                else sb.Append(c);
-            }
-            if (sb.Length > 0 || cur.Count > 0) { cur.Add(sb.ToString()); rows.Add(cur); }
-            rows = rows.Where(r => r.Any(x => x.Trim().Length > 0)).ToList();
-            var result = new List<Dictionary<string, string>>(); if (rows.Count < 2) return result;
-            var head = rows[0].Select(h => h.Trim()).ToList();
-            foreach (var r in rows.Skip(1)) { var d = new Dictionary<string, string>(); for (int i = 0; i < head.Count && head[i].Length > 0; i++) d[head[i]] = i < r.Count ? r[i] : ""; result.Add(d); }
-            return result;
-        }
-
         // ------------------------------------------------------------ reading the export
         public static List<ProcActivity> Load(string path)
         {
             List<Dictionary<string, string>> rows = null; Dictionary<string, string> cover = null;
-            if (path.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)) rows = ParseCsv(path);
+            if (path.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)) rows = Replayer.ParseCsv(path);
             else
             {
                 var sheets = ReadXlsxSheets(path);
@@ -300,8 +278,8 @@ namespace SnapLite
             return list;
         }
 
-        // ------------------------------------------------------------ the procedure stored in the session
-        public static Dictionary<string, object> ProcedureObject(ProcActivity act, List<InputSpec> specs)
+        // ------------------------------------------------------------ the procedure stored in the session, and the job for Claude
+        public static Dictionary<string, object> ProcedureObject(ProcActivity act, List<InputSpec> specs, CaptureChoice cap)
         {
             var ps = new Dictionary<string, object>();
             foreach (var s in specs)
@@ -309,11 +287,46 @@ namespace SnapLite
             return new Dictionary<string, object> {
                 { "name", act.Title }, { "activity", new Dictionary<string, object> { { "code", act.Code }, { "title", act.Title }, { "system", act.System } } },
                 { "process", new Dictionary<string, object> { { "code", act.ProcessCode }, { "title", act.ProcessTitle }, { "version", act.ProcessVersion }, { "client", act.Client }, { "parent", act.Parent } } },
-                { "capture", new Dictionary<string, object> { { "mode", "screen" } } },
+                { "capture", cap != null ? cap.ToObject() : new Dictionary<string, object> { { "mode", "screen" } } },
                 { "tasks", act.Tasks.Select(t => (object)new Dictionary<string, object> { { "code", t.Code }, { "title", t.Title },
                     { "actions", t.Actions.Select(a => (object)new Dictionary<string, object> { { "code", a.Code }, { "text", a.Text }, { "kind", a.Kind }, { "param", a.Param } }).ToList() } }).ToList() },
                 { "steps", act.Tasks.SelectMany(t => t.Actions).Select(a => (object)a.Text).ToList() },
                 { "params", ps } };
+        }
+
+        public static string JobsFolder { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SnapLite", "jobs"); } }
+
+        // the file Claude reads. It holds the values for this run, so it lives in the person's own folder and is cleared after two days.
+        public static string WriteJob(ProcActivity act, List<InputSpec> specs, Dictionary<string, string> values, CaptureChoice cap)
+        {
+            Directory.CreateDirectory(JobsFolder);
+            foreach (var f in Directory.GetFiles(JobsFolder, "*.json")) { try { if (File.GetLastWriteTime(f) < DateTime.Now.AddDays(-2)) File.Delete(f); } catch { } }
+            var tasks = new List<object>();
+            foreach (var t in act.Tasks)
+                tasks.Add(new Dictionary<string, object> { { "code", t.Code }, { "title", t.Title }, { "task", t.Full }, { "actions", t.Actions.Select(a =>
+                {
+                    var d = new Dictionary<string, object> { { "code", a.Code }, { "text", a.Text }, { "kind", a.Kind } };
+                    d["plan"] = a.Plan.Select(p =>
+                    {
+                        var s = new Dictionary<string, object> { { "do", p.Do }, { "target", p.Target } };
+                        if (p.Locator.Length > 0) s["locator"] = p.Locator;
+                        if ((p.Do == "type" || p.Do == "choose") && a.Param.Length > 0) s["param"] = a.Param;
+                        return (object)s;
+                    }).ToList();
+                    if (a.Kind == "enter" || a.Kind == "choose")
+                    {
+                        string v; values.TryGetValue(a.Param, out v);
+                        d["param"] = a.Param; d["field"] = a.Field; d["type"] = a.Type; d["optional"] = a.Optional; d["value"] = v ?? "";
+                        if (a.Choices.Count > 0) d["choices"] = a.Choices.Cast<object>().ToArray();
+                    }
+                    if (a.Kind == "skip") d["why"] = a.Why;
+                    return (object)d;
+                }).ToList() } });
+            var job = new Dictionary<string, object> { { "version", 1 }, { "xlcapture", System.Windows.Forms.Application.ExecutablePath }, { "sessionName", act.Title }, { "system", act.System }, { "activityCode", act.Code }, { "capture", cap != null ? cap.ToObject() : new Dictionary<string, object> { { "mode", "screen" } } }, { "procedure", ProcedureObject(act, specs, cap) }, { "tasks", tasks } };
+            string slug = Regex.Replace(act.Title.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-'); if (slug.Length > 40) slug = slug.Substring(0, 40).Trim('-');
+            string path = Path.Combine(JobsFolder, slug + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".json");
+            File.WriteAllText(path, new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.Serialize(job), new UTF8Encoding(false));
+            return path;
         }
     }
 }

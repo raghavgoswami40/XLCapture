@@ -77,6 +77,7 @@ try {
   } else { Note "session based checks" $false "the editor test left no session in $data" }
   Run "capture window is the same size on every monitor" @('--hub-monitors', "`"$shots\hubmon`"") "$shots\hubmon.txt" 90 "ALL PASSED"
   Run "capture from the capture window still covers the real desktop" @('--hub-capture', "`"$Work\hubcap.log`"") "$Work\hubcap.log" 60 "ALL PASSED"
+  Run "status window photographed" @('--status-shot', "`"$shots\status`"") "" 60
   Run "capture window photographed" @('--hub-shot', "`"$shots\hub.png`"") "" 90
 }
 finally {

@@ -51,6 +51,7 @@ namespace SnapLite
             if (args.Length >= 1 && args[0] == "--hub-capture") return DevChecks.HubCapture(args);
             if (args.Length >= 1 && args[0] == "--look-test2") return DevChecks.LookTest2(args);
             if (args.Length >= 1 && args[0] == "--editor-monitors") return DevChecks.EditorMonitors(args);
+            if (args.Length >= 1 && args[0] == "--status-shot") return DevChecks.StatusShot(args);
             if (args.Length >= 1 && args[0] == "--security-test") return DevChecks.SecurityTest(args);
             if (args.Length >= 1 && args[0] == "--menu-shot") return DevChecks.MenuShot(args);
             if (args.Length >= 1 && args[0] == "--av-test") return DevChecks.AvTest(args);
@@ -58,11 +59,16 @@ namespace SnapLite
             if (args.Length >= 1 && args[0] == "--session-shot") return DevChecks.SessionShot(args);
             if (args.Length >= 1 && args[0] == "--video-test") return DevChecks.VideoTest(args);
             if (args.Length >= 1 && args[0] == "--stitch-test") return DevChecks.StitchTest(args);
+            if (args.Length >= 1 && args[0] == "--driver-test") return DevChecks.DriverTest(args);
+            if (args.Length >= 1 && args[0] == "--browser-test") return DevChecks.BrowserTest(args);
+            if (args.Length >= 1 && args[0] == "--bot-shot") return DevChecks.BotShot(args);
             if (args.Length >= 1 && args[0] == "--proc-test") return DevChecks.ProcTest(args);
+            if (args.Length >= 1 && args[0] == "--wizard-shot") return DevChecks.WizardShot(args);
             if (args.Length >= 1 && args[0] == "--editor-test") return DevChecks.EditorTest(args);
             if (args.Length >= 1 && args[0] == "--capture-shot") return DevChecks.CaptureShot(args);
             if (args.Length >= 1 && args[0] == "--pixel-test") return DevChecks.PixelTest(args);
 #endif
+            if (args.Length >= 1 && args[0] == "--cmd") return RemoteControl.Client(args);
 
             bool created;
             using (var m = new Mutex(true, "SnapLite.SingleInstance.v2", out created))
@@ -78,6 +84,7 @@ namespace SnapLite
                 // the capture window is laid out in the startup scale and stretched by Windows on a monitor with another scale (like the editor); its window is made here so it keeps that
                 Hub hub = null; Native.WithDpi(false, delegate { hub = new Hub(); var made = hub.Handle; });
                 EditorForm.NewCaptureRequested = delegate { Native.WithDpi(true, delegate { hub.CaptureCurrent(); }); };      // the editor is system-DPI aware; capturing needs real pixels
+                if (args.Contains("--control")) RemoteControl.Start();
                 bool tray = args.Contains("--tray");
                 var files = args.Where(a => File.Exists(a)).ToList();
                 if (!tray) Native.WithDpi(false, delegate { hub.Show(); });

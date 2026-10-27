@@ -150,7 +150,7 @@ namespace SnapLite
             if (Activity != null)
             {
                 StartPlan(Activity);
-                if (plan != null && !resuming) { doc.Name = Activity.Title + " " + DateTime.Now.ToString("yyyy-MM-dd HH.mm"); doc.Procedure = ProcedureFile.ProcedureObject(Activity, new List<InputSpec>()); doc.Procedure["source"] = Settings.SesProcFile; }
+                if (plan != null && !resuming) { doc.Name = Activity.Title + " " + DateTime.Now.ToString("yyyy-MM-dd HH.mm"); doc.Procedure = ProcedureFile.ProcedureObject(Activity, new List<InputSpec>(), null); doc.Procedure["source"] = Settings.SesProcFile; }
                 else if (plan != null) ResumePlan();
             }
         }

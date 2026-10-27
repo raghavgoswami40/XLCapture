@@ -1,4 +1,4 @@
-// Small UI Automation helpers shared by the recorder and the capture window:
+// Small UI Automation helpers shared by the recorder, the driver and replay:
 // how to name an element's place in a window, and how to read the address of a browser page.
 using System;
 using System.Collections.Generic;

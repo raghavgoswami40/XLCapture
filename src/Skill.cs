@@ -1,5 +1,6 @@
-﻿// The skill that tells Claude Code how to work with XLCapture travels inside the program: xlcapture-slides (build the slide pack PowerPoint
-// from an exported folder). It is put in the user's own Claude folder the first time it is needed, and again when this program carries a newer version of it.
+﻿// The skills that tell Claude Code how to work with XLCapture travel inside the program: snaplite-teach (drive XLCapture through a procedure)
+// and xlcapture-slides (build the slide pack PowerPoint from an exported folder). Each is put in the user's own Claude folder the first
+// time it is needed, and again when this program carries a newer version of it.
 using System;
 using System.IO;
 using System.Reflection;
@@ -9,7 +10,7 @@ namespace SnapLite
 {
     static class SkillInstaller
     {
-        public static readonly string[] Names = { "xlcapture-slides" };
+        public static readonly string[] Names = { "snaplite-teach", "xlcapture-slides" };
         static string Target(string name) { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "skills", name, "SKILL.md"); }
         static int VersionOf(string text) { var m = Regex.Match(text ?? "", @"<!--\s*xlcapture-skill:\s*(\d+)\s*-->"); return m.Success ? int.Parse(m.Groups[1].Value) : 0; }
 
@@ -26,7 +27,6 @@ namespace SnapLite
         // returns true when every skill is in place
         public static bool EnsureInstalled()
         {
-            RemoveLegacy();
             bool all = true;
             foreach (var n in Names) all &= EnsureInstalled(n);
             return all;
@@ -47,15 +47,10 @@ namespace SnapLite
             }
             catch { return false; }
         }
-        // the skill earlier versions put there to drive XLCapture through a procedure: this version cannot be driven that way, so take it out again (only if XLCapture put it there)
-        static void RemoveLegacy()
-        {
-            try { string t = Target("snaplite-teach"); if (File.Exists(t) && VersionOf(File.ReadAllText(t)) > 0) Directory.Delete(Path.GetDirectoryName(t), true); } catch { }
-        }
         // for the uninstaller: take the skills out again if XLCapture put them there
         public static void Remove()
         {
-            foreach (var n in new[] { Names[0], "snaplite-teach" })
+            foreach (var n in Names)
                 try { string t = Target(n); if (File.Exists(t) && VersionOf(File.ReadAllText(t)) > 0) Directory.Delete(Path.GetDirectoryName(t), true); } catch { }
         }
     }

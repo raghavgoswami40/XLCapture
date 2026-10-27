@@ -16,7 +16,7 @@ $src = Get-ChildItem (Join-Path $here "src") -Filter *.cs | ForEach-Object { $_.
 $out = if ($OutFile) { $OutFile } else { Join-Path $here "XLCapture.exe" }
 $assets = Join-Path $here "assets"
 # the logos are built into the program: the short one as the icon, both as pictures
-$res = @("/win32icon:$assets\xlcapture.ico", "/resource:$assets\xlcapture.ico,XLCapture.icon.ico", "/resource:$assets\logo-mark.png,XLCapture.logo-mark.png", "/resource:$assets\logo-full.png,XLCapture.logo-full.png", "/resource:$assets\xlcapture-slides.md,XLCapture.xlcapture-slides.md", "/resource:$assets\xlcapture-build-deck.py,XLCapture.xlcapture-build-deck.py")
+$res = @("/win32icon:$assets\xlcapture.ico", "/resource:$assets\xlcapture.ico,XLCapture.icon.ico", "/resource:$assets\logo-mark.png,XLCapture.logo-mark.png", "/resource:$assets\logo-full.png,XLCapture.logo-full.png", "/resource:$assets\snaplite-teach.md,XLCapture.snaplite-teach.md", "/resource:$assets\xlcapture-slides.md,XLCapture.xlcapture-slides.md", "/resource:$assets\xlcapture-build-deck.py,XLCapture.xlcapture-build-deck.py")
 $define = @(); if ($Dev) { $define = @("/define:DEVCHECKS") }
 & "$N\csc.exe" /nologo /target:winexe /optimize+ /unsafe /codepage:65001 @define /out:$out @res @refs $src
 if ($LASTEXITCODE -ne 0) { exit 1 }

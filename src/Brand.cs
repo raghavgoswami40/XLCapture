@@ -22,7 +22,7 @@ namespace SnapLite
             };
             var title = new Label { Text = Brand.Name, AutoSize = false, Location = new Point(Dpi.S(32), Dpi.S(212)), Size = Dpi.S(456, 32), Font = Theme.Semi(17f), ForeColor = Theme.Ink };
             var text = new Label { AutoSize = false, Location = new Point(Dpi.S(32), Dpi.S(250)), Size = Dpi.S(456, 90), ForeColor = Theme.Slate,
-                Text = "A local capture, recording and annotation tool.\r\n\r\nNo accounts, no uploads unless you choose FTP or email." };
+                Text = "A local capture, recording and annotation tool, with ClickBot to repeat a recorded process for you.\r\n\r\nNo accounts, no uploads unless you choose FTP or email." };
             var ok = new FlatButton("Close", true) { Location = new Point(Dpi.S(388), Dpi.S(346)), Size = Dpi.S(100, 38), DialogResult = DialogResult.OK };
             Controls.AddRange(new Control[] { top, title, text, ok }); AcceptButton = ok; CancelButton = ok;
         }

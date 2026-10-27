@@ -100,7 +100,8 @@ namespace SnapLite
         public static Hub Instance;
         readonly NotifyIcon tray; readonly HotkeyWindow hk = new HotkeyWindow();
         readonly Dictionary<int, string> hotIds = new Dictionary<int, string>();
-        readonly TabButton tabAio, tabImg, tabVid, tabSes; readonly Card card; readonly RoundButton capture; readonly KeyHint hotkeyLabel;
+        readonly TabButton tabAio, tabImg, tabVid, tabSes, tabBot; readonly Card card; readonly RoundButton capture; readonly KeyHint hotkeyLabel;
+        ClickBotPanel botPanel;
         readonly Panel presetsPanel; readonly PresetPanel presetList; readonly ToolTip tips = new ToolTip();
         bool busy, quitting, presetsOpen;
         public static List<Profile> Profiles = new List<Profile>();
@@ -134,11 +135,12 @@ namespace SnapLite
             tabImg = new TabButton(Ic.Camera, "Image") { Location = new Point(Dpi.S(6), Dpi.S(104)), Size = Dpi.S(104, 64) };
             tabVid = new TabButton(Ic.Video, "Video") { Location = new Point(Dpi.S(6), Dpi.S(168)), Size = Dpi.S(104, 64) };
             tabSes = new TabButton(Ic.Session, "Sessions") { Location = new Point(Dpi.S(6), Dpi.S(232)), Size = Dpi.S(104, 64) };
-            tabAio.Click += delegate { SetTab("aio"); }; tabImg.Click += delegate { SetTab("image"); }; tabVid.Click += delegate { SetTab("video"); }; tabSes.Click += delegate { SetTab("session"); };
+            tabBot = new TabButton(Ic.Bot, "ClickBot") { Badge = "Beta", Location = new Point(Dpi.S(6), Dpi.S(296)), Size = Dpi.S(104, 64) };
+            tabAio.Click += delegate { SetTab("aio"); }; tabImg.Click += delegate { SetTab("image"); }; tabVid.Click += delegate { SetTab("video"); }; tabSes.Click += delegate { SetTab("session"); }; tabBot.Click += delegate { SetTab("bot"); };
 
             card = new Card { Location = new Point(Dpi.S(118), Dpi.S(44)), Size = Dpi.S(600, 316) };
             capture = new RoundButton("Capture") { Location = new Point(Dpi.S(738), Dpi.S(76)), Size = Dpi.S(130, 130) };
-            capture.Click += delegate { CaptureCurrent(); };
+            capture.Click += delegate { if (Settings.CapTab == "bot") { if (botPanel != null) botPanel.Run(); } else CaptureCurrent(); };
             hotkeyLabel = new KeyHint { Location = new Point(Dpi.S(720), Dpi.S(216)), Size = Dpi.S(166, 30) };
             tips.SetToolTip(hotkeyLabel, "The hotkey works from anywhere, even with this window hidden. Change it in Edit > Preferences and hotkeys.");
             // under the hotkey, a labelled reset (an unlabelled arrow on its own was easy to miss and hard to guess)
@@ -164,7 +166,7 @@ namespace SnapLite
             card.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             capture.Anchor = hotkeyLabel.Anchor = reset.Anchor = openEd.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             presetsPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            Controls.AddRange(new Control[] { tabAio, tabImg, tabVid, tabSes, card, capture, hotkeyLabel, reset, presets, add, openEd, presetsPanel });
+            Controls.AddRange(new Control[] { tabAio, tabImg, tabVid, tabSes, tabBot, card, capture, hotkeyLabel, reset, presets, add, openEd, presetsPanel });
             Controls.Add(menu);
 
             // tray + hotkeys
@@ -212,10 +214,10 @@ namespace SnapLite
         // ---------------------------------------------------------------- tabs and the options card
         public void SetTab(string tab)
         {
-            if (tab != "aio" && tab != "video" && tab != "session") tab = "image";
+            if (tab != "aio" && tab != "video" && tab != "session" && tab != "bot") tab = "image";
             Settings.CapTab = tab; Settings.Save();
-            tabAio.Selected = tab == "aio"; tabImg.Selected = tab == "image"; tabVid.Selected = tab == "video"; tabSes.Selected = tab == "session";
-            tabAio.Invalidate(); tabImg.Invalidate(); tabVid.Invalidate(); tabSes.Invalidate();
+            tabAio.Selected = tab == "aio"; tabImg.Selected = tab == "image"; tabVid.Selected = tab == "video"; tabSes.Selected = tab == "session"; tabBot.Selected = tab == "bot";
+            tabAio.Invalidate(); tabImg.Invalidate(); tabVid.Invalidate(); tabSes.Invalidate(); tabBot.Invalidate();
             BuildCard();
             string hkText; Settings.Hotkeys.TryGetValue("capture", out hkText);
             hotkeyLabel.Text = string.IsNullOrEmpty(hkText) ? "No hotkey" : hkText;
@@ -225,11 +227,11 @@ namespace SnapLite
         public void UpdateCaptureButton()
         {
             string tab = Settings.CapTab;
-            capture.Text = tab == "session" ? (SessionRecorder.Active ? "Stop" : "Record") : tab == "video" ? "Record" : "Capture";
-            capture.Fill = capture.Text == "Capture" ? Theme.Accent : Theme.Mark;      // red means it records, or stops a recording
+            capture.Text = tab == "bot" ? (Replayer.Running ? "Stop" : "Run") : tab == "session" ? (SessionRecorder.Active ? "Stop" : "Record") : tab == "video" ? "Record" : "Capture";
+            capture.Fill = capture.Text == "Capture" || capture.Text == "Run" ? Theme.Accent : Theme.Mark;      // red means it records, or stops something running
             capture.Invalidate();
             string k; Settings.Hotkeys.TryGetValue(tab == "session" ? "session" : "capture", out k);
-            hotkeyLabel.Text = string.IsNullOrEmpty(k) ? "No hotkey" : k;
+            hotkeyLabel.Text = tab == "bot" ? "Pause/Break stops a run" : string.IsNullOrEmpty(k) ? "No hotkey" : k;
         }
 
         int RowY(int i) { return Dpi.S(58 + i * 58); }
@@ -269,7 +271,14 @@ namespace SnapLite
         {
             card.SuspendLayout();
             foreach (Control c in card.Controls.Cast<Control>().ToList()) { card.Controls.Remove(c); c.Dispose(); }
-            card.Padding = Padding.Empty;
+            botPanel = null; card.Padding = Padding.Empty;
+            if (Settings.CapTab == "bot")
+            {
+                card.Padding = new Padding(1);           // keeps the card's rounded outline visible around the panel
+                botPanel = new ClickBotPanel { Dock = DockStyle.Fill };
+                card.Controls.Add(botPanel);
+                card.ResumeLayout(); return;
+            }
             string[] shares = { "None", "Save as a file...", "Email", "FTP upload", "Print", "Show in folder" };
             string[] shareKeys = { "none", "file", "email", "ftp", "print", "folder" };
             Action<int> share = delegate(int i) { Settings.ImgShare = shareKeys[i]; };
@@ -372,6 +381,7 @@ namespace SnapLite
         }
         void ResetTab()
         {
+            if (Settings.CapTab == "bot") { if (botPanel != null) botPanel.Reload(); return; }
             if (Settings.CapTab == "video") { Settings.VidSel = "region"; Settings.VidFormat = "mp4"; Settings.VidOpenIn = "editor"; Settings.VidCursor = true; Settings.MicOn = true; }
             else { Settings.ImgSel = "region"; Settings.ImgEffect = "none"; Settings.ImgShare = "none"; Settings.PreviewInEditor = true; Settings.CopyToClip = false; Settings.ShowCursor = true; Settings.DelayOn = false; }
             Settings.Save(); BuildCard();
@@ -567,6 +577,13 @@ namespace SnapLite
         {
             if (SessionRecorder.Active) { ToggleSession(); return; }
             if (Recorder.Active) { Recorder.Stop(); return; }
+            if (Settings.CapTab == "bot")
+            {
+                // the capture hotkey must never start an automated run: while ClickBot is showing it takes a picture, or stops a run
+                if (Replayer.Running) { Replayer.Cancel(); return; }
+                if (!busy) Begin(Modes.ByKey(Settings.ImgSel));
+                return;
+            }
             if (Settings.CapTab == "session") { ToggleSession(); return; }
             if (busy) return;
             if (Settings.CapTab == "video")

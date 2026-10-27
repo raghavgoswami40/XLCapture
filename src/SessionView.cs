@@ -2,7 +2,7 @@
 // and the editing functions of ClickTrail's session editor: merge a screen with the previous one, start a new
 // screenshot from a step, add a step, move and resize the box, move the number, crop, paste a picture,
 // choose which picture a screen shows, delete a step or a whole screen, and undo. Plus what turns a session into
-// something to share (export pictures, export a PDF guide, a guide folder, a slide pack).
+// something to share (export pictures, export a PDF guide, a guide folder) and replay.
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -744,6 +744,45 @@ namespace SnapLite
             if (groups.Count == 0) return;
             if (SessionDoc.PictureOf(groups[screen]) == null) { Say("This screen has no picture."); return; }
             if (OpenInEditor != null) OpenInEditor(Doc.ScreenToDoc(groups[screen], screen + 1));
+        }
+        // an input is a step whose typed value changes from run to run; only its name is stored
+        void MakeInput()
+        {
+            if (current == null || current.Kind == "scroll") { Say("Select a step that clicks into a field first."); return; }
+            string now = Microsoft.VisualBasic.Interaction.InputBox("Name this input (letters, digits and _). A replay will ask for its value.\r\nLeave it empty to make this an ordinary step again.", "Make input", current.Param);
+            if (now == null) return;
+            now = new string(now.Trim().Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+            Push(); var step = current; step.Param = now; step.Typed = now.Length > 0 || step.Typed; Doc.Dirty = true;
+            Rebuild(screen); SelectStep(step);
+        }
+        void Replay()
+        {
+            if (Doc == null || Doc.Steps.Count == 0) { Say("This session has no steps to replay."); return; }
+            if (Replayer.Running) { Say("A replay is already running."); return; }
+            var d = new ReplayDialog(Doc);
+            if (d.ShowDialog(FindForm()) != DialogResult.OK) return;
+            var owner = FindForm(); var hub = Hub.Instance; var doc = Doc;
+            var ownerState = owner.WindowState; var hubState = hub != null ? hub.WindowState : FormWindowState.Normal;
+            owner.WindowState = FormWindowState.Minimized; if (hub != null && hub.Visible) hub.WindowState = FormWindowState.Minimized;   // out of the way of the app being driven
+            var opt = new Replayer.Options { Strict = d.Strict, Values = d.Values }; var rows = d.Rows;
+            var th = new System.Threading.Thread(delegate()
+            {
+                var results = rows != null ? Replayer.RunBatch(doc, rows, opt) : new List<Replayer.Result> { Replayer.Run(doc, opt) };
+                try
+                {
+                    owner.BeginInvoke((Action)delegate
+                    {
+                        owner.WindowState = ownerState; if (hub != null) hub.WindowState = hubState;
+                        var last = results.Last(); bool ok = results.All(r => r.Ok);
+                        string msg = ok ? "Replayed " + results.Count + (results.Count == 1 ? " run" : " runs") + ": all " + last.Total + " steps done each time."
+                            : "The replay stopped. " + last.Error + "\r\n\r\n" + last.Done + " of " + last.Total + " steps were done.";
+                        if (last.Saved != null) msg += "\r\n\r\nWhat the bot did was saved as a new session:\r\n" + last.Saved;
+                        MessageBox.Show(owner, msg, "Replay", MessageBoxButtons.OK, ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                    });
+                }
+                catch { }
+            }) { IsBackground = true, Name = "replay" };
+            th.Start();
         }
         void ExportGuide()
         {

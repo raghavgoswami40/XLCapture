@@ -61,7 +61,7 @@ namespace XLCaptureSetup
             lt.InvokeMember("Arguments", BindingFlags.SetProperty, null, l, new object[] { args });
             lt.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, l, new object[] { where });
             lt.InvokeMember("IconLocation", BindingFlags.SetProperty, null, l, new object[] { icon });
-            lt.InvokeMember("Description", BindingFlags.SetProperty, null, l, new object[] { "Capture, record and annotate." });
+            lt.InvokeMember("Description", BindingFlags.SetProperty, null, l, new object[] { "Capture, record and annotate. ClickBot repeats a process for you." });
             lt.InvokeMember("Save", BindingFlags.InvokeMethod, null, l, null);
         }
 
@@ -95,7 +95,7 @@ namespace XLCaptureSetup
                     try { k.SetValue("EstimatedSize", (int)((new FileInfo(exe).Length + new FileInfo(uninstaller).Length) / 1024), RegistryValueKind.DWord); } catch { }
                 }
 
-                say("Setting up the Claude skill for slide packs");
+                say("Setting up ClickBot's Claude skill");
                 try { var p = Process.Start(new ProcessStartInfo(exe, "--install-skill") { UseShellExecute = false, CreateNoWindow = true }); if (p != null) p.WaitForExit(15000); } catch { }
                 return null;
             }
@@ -118,7 +118,7 @@ namespace XLCaptureSetup
                 if (runningHere) Process.Start(new ProcessStartInfo("cmd.exe", "/c ping 127.0.0.1 -n 3 > nul & del /f /q \"" + self + "\" & rmdir \"" + folder + "\"") { CreateNoWindow = true, UseShellExecute = false });
                 else { try { Directory.Delete(folder, false); } catch { } }
                 // the Claude skill XLCapture put in the person's Claude folder
-                foreach (string name in new[] { "xlcapture-slides", "snaplite-teach" })      // snaplite-teach: put there by earlier versions
+                foreach (string name in new[] { "snaplite-teach", "xlcapture-slides" })
                     try
                     {
                         string skill = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "skills", name);
@@ -178,7 +178,7 @@ namespace XLCaptureSetup
                 if (logo == null) return; e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic; int h = 70, w = (int)(h * (float)logo.Width / logo.Height); e.Graphics.DrawImage(logo, 36, (band.Height - h) / 2, w, h);
             };
             title = new Label { Text = "Install XLCapture " + Info.Version, Font = new Font("Segoe UI Semibold", 15f), ForeColor = Ink, Location = new Point(36, 140), Size = new Size(490, 34) };
-            body = new Label { Text = "Capture the screen, record video, record clicks as a step-by-step session, and mark up screenshots. XLCapture is installed for you only; no administrator rights are needed.", ForeColor = Slate, Location = new Point(36, 178), Size = new Size(490, 60) };
+            body = new Label { Text = "Capture the screen, record video, mark up screenshots, and let ClickBot repeat a process for you. XLCapture is installed for you only; no administrator rights are needed.", ForeColor = Slate, Location = new Point(36, 178), Size = new Size(490, 60) };
             var fl = new Label { Text = "Install to", ForeColor = Slate, Location = new Point(36, 248), AutoSize = true };
             folder = new TextBox { Text = o.Folder, Location = new Point(36, 270), Width = 380, BorderStyle = BorderStyle.FixedSingle };
             var browse = new Button { Text = "Browse...", Location = new Point(426, 268), Size = new Size(100, 28), FlatStyle = FlatStyle.Flat };

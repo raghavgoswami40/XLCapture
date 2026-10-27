@@ -280,6 +280,145 @@ namespace SnapLite
             return 0;
         }
 
+        // drive a real window through UI Automation: learn a short process, save it, replay it with other values,
+        // run it from a CSV, and do the same through the control channel. args: --driver-test <log> <folder>
+        public static int DriverTest(string[] args)
+        {
+            var log = new System.Text.StringBuilder(); bool ok = true;
+            Action<bool, string> check = delegate(bool c, string m) { log.AppendLine((c ? "PASS  " : "FAIL  ") + m); if (!c) ok = false; };
+            string dir = args[2]; Directory.CreateDirectory(dir); Settings.Folder = dir; SessionWriter.NoLibrary = true;
+
+            Form form = null; TextBox box = null; Label result = null, pickLabel = null; ListBox pickList = null; var ready = new System.Threading.ManualResetEvent(false);
+            var ui = new System.Threading.Thread(delegate()
+            {
+                form = new Form { Text = "SnapLite Driver Test", Width = 480, Height = 340, StartPosition = FormStartPosition.Manual, Location = new Point(120, 120) };
+                box = new TextBox { Name = "txtName", AccessibleName = "Item name", Location = new Point(20, 20), Width = 300 };
+                var add = new Button { Name = "btnAdd", Text = "Add item", Location = new Point(20, 60), Width = 120 };
+                result = new Label { Name = "lblResult", AccessibleName = "Result", Location = new Point(20, 110), Width = 420 };
+                add.Click += delegate { result.Text = "Added: " + box.Text; };
+                pickList = new ListBox { Name = "lstPick", AccessibleName = "Pick one", Location = new Point(20, 140), Size = new Size(200, 110), IntegralHeight = false }; pickList.Items.AddRange(new object[] { "Alpha", "Beta", "Gamma" });
+                pickLabel = new Label { Name = "lblPick", AccessibleName = "Picked", Location = new Point(240, 140), Width = 200 };
+                pickList.SelectedIndexChanged += delegate { pickLabel.Text = "Picked: " + pickList.SelectedItem; };
+                form.Controls.AddRange(new Control[] { box, add, result, pickList, pickLabel });
+                form.Shown += delegate { ready.Set(); };
+                Application.Run(form);
+            });
+            ui.SetApartmentState(System.Threading.ApartmentState.STA); ui.Start();
+            if (!ready.WaitOne(10000)) { File.WriteAllText(args[1], "FAIL  the test window did not open"); return 1; }
+            Func<string> read = delegate { return (string)form.Invoke((Func<string>)delegate { return result.Text; }); };
+            Action reset = delegate { form.Invoke((Action)delegate { box.Text = ""; result.Text = ""; pickList.ClearSelected(); pickLabel.Text = ""; }); };
+            Func<string> readPick = delegate { return (string)form.Invoke((Func<string>)delegate { return pickLabel.Text; }); };
+
+            var work = new System.Threading.Thread(delegate()
+            {
+                try
+                {
+                    System.Threading.Thread.Sleep(600);
+                    var proc = new Dictionary<string, object> { { "name", "Driver test" }, { "params", new Dictionary<string, object> { { "item_name", new Dictionary<string, object> { { "type", "text" }, { "default", "" } } } } } };
+                    var w = new SessionWriter("Driver test", proc);
+                    var win = new Target { Process = Me, Title = "SnapLite Driver Test" };
+                    var t1 = new Target { Process = win.Process, Title = win.Title, Label = "Item name", Role = "Edit" };
+                    var t2 = new Target { Process = win.Process, Title = win.Title, Label = "Add item", Role = "Button" };
+                    var o1 = Driver.Perform(w, t1, "type", "Alpha", "item_name", "", new Driver.Options());
+                    check(o1.Ok, "learning: typed into the field (" + (o1.Ok ? o1.Method : o1.Error) + ")");
+                    log.AppendLine("      right after typing the box held: \"" + (string)form.Invoke((Func<string>)delegate { return box.Text; }) + "\"");
+                    System.Threading.Thread.Sleep(1500);
+                    log.AppendLine("      1.5 s later it held: \"" + (string)form.Invoke((Func<string>)delegate { return box.Text; }) + "\"");
+                    var o2 = Driver.Perform(w, t2, "click", null, "", "", new Driver.Options());
+                    check(o2.Ok, "learning: clicked the button (" + (o2.Ok ? o2.Method : o2.Error) + ")");
+                    check(read() == "Added: Alpha", "the app received the typed value and the click (\"" + read() + "\")");
+                    log.AppendLine("      textbox now: \"" + (string)form.Invoke((Func<string>)delegate { return box.Text; }) + "\"; foreground was test window: " + (Native.TitleOf(Native.GetForegroundWindow())));
+                    string path = w.Save(); w.Dispose();
+                    var doc = SessionDoc.Load(path);
+                    check(doc.Steps.Count == 2 && doc.Steps[0].Param == "item_name" && doc.Steps[0].Typed && doc.Steps[0].Frame != null && doc.Steps[0].AfterFrame != null, "saved session reloads: 2 steps, input slot kept, screenshots kept");
+                    check(doc.Steps[0].ClassName.Length > 0 && doc.Steps[1].Role == "Button" && doc.Steps[1].Label == "Add item", "targets kept: " + doc.Steps[0].ClassName + " / " + doc.Steps[1].Role + " " + doc.Steps[1].Label);
+                    check(doc.ParamNames().SequenceEqual(new[] { "item_name" }) && doc.Procedure != null, "input slots: " + string.Join(",", doc.ParamNames().ToArray()));
+                    var bytes = File.ReadAllBytes(path); string asText = System.Text.Encoding.ASCII.GetString(bytes);
+                    check(asText.IndexOf("Alpha") < 0, "the typed value is not stored in the session file");
+
+                    reset();
+                    var r = Replayer.Run(doc, new Replayer.Options { ShowBar = false, Values = new Dictionary<string, string> { { "item_name", "Beta" } } });
+                    check(r.Ok, "replay with a different value ran" + (r.Ok ? "" : ": " + r.Error));
+                    check(read() == "Added: Beta", "replay put the new value in the app (\"" + read() + "\")");
+                    check(r.Saved != null && File.Exists(r.Saved) && SessionDoc.Load(r.Saved).Steps.Count == 2, "the replay recorded itself as a new session");
+                    check(File.ReadAllBytes(r.Saved).Length > 0 && System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(r.Saved)).IndexOf("Beta") < 0, "the replayed value is not stored either");
+
+                    var export = GuideExport.Write(doc, dir);
+                    check(File.Exists(Path.Combine(export, "clicks.json")) && File.Exists(Path.Combine(export, "shot-01.png")), "guide folder written: " + Path.GetFileName(export));
+
+                    string csv = Path.Combine(dir, "rows.csv"); File.WriteAllText(csv, "item_name\r\nGamma\r\n\"Delta, with comma\"\r\n");
+                    var rows = Replayer.ParseCsv(csv); check(rows.Count == 2 && rows[1]["item_name"] == "Delta, with comma", "csv parsed: " + rows.Count + " rows");
+                    reset();
+                    var batch = Replayer.RunBatch(doc, rows, new Replayer.Options { ShowBar = false });
+                    check(batch.Count == 2 && batch.All(x => x.Ok) && read() == "Added: Delta, with comma", "batch of 2 runs (\"" + read() + "\")");
+
+                    // a procedure session: steps grouped by task, a chosen option kept as an input (never as text), an optional input that can be left blank
+                    reset();
+                    var proc2 = new Dictionary<string, object> { { "name", "Tasks test" }, { "params", new Dictionary<string, object> {
+                        { "item_name", new Dictionary<string, object> { { "type", "text" }, { "label", "Item name" }, { "optional", true }, { "task", "1 Add an item" }, { "action", "1.1" } } },
+                        { "pick", new Dictionary<string, object> { { "type", "text" }, { "label", "Pick one" }, { "optional", false }, { "task", "2 Pick one" }, { "action", "2.1" } } } } } };
+                    var w2 = new SessionWriter("Tasks test", proc2);
+                    var ta = new Target { Process = Me, Title = "SnapLite Driver Test", Label = "Item name", Role = "Edit", Task = "1 Add an item", ActionCode = "1.1" };
+                    var tb2 = new Target { Process = Me, Title = "SnapLite Driver Test", Label = "Add item", Role = "Button", Task = "1 Add an item", ActionCode = "1.2" };
+                    var tc = new Target { Process = Me, Title = "SnapLite Driver Test", Role = "ListItem", Task = "2 Pick one", ActionCode = "2.1" };
+                    check(Driver.Perform(w2, ta, "type", "Delta", "item_name", "Enter the item name in \"Item name\"", new Driver.Options()).Ok, "tasks: typed the first action");
+                    check(Driver.Perform(w2, tb2, "click", null, "", "Click \"Add item\"", new Driver.Options()).Ok, "tasks: clicked the second action");
+                    var oc = Driver.Perform(w2, tc, "choose", "Beta", "pick", "Choose the option in \"Pick one\"", new Driver.Options());
+                    check(oc.Ok, "tasks: chose an option by its name (" + (oc.Ok ? oc.Method : oc.Error) + ")");
+                    System.Threading.Thread.Sleep(400);
+                    log.AppendLine("      pick box on screen " + (Rectangle)form.Invoke((Func<Rectangle>)delegate { return pickList.RectangleToScreen(pickList.ClientRectangle); }) + ", selected index " + (int)form.Invoke((Func<int>)delegate { return pickList.SelectedIndex; }) + ", step at " + oc.Step.X + "," + oc.Step.Y + " (area " + oc.Step.Vw + "x" + oc.Step.Vh + "), cursor " + System.Windows.Forms.Cursor.Position);
+                    check(readPick() == "Picked: Beta", "tasks: the app received the choice (\"" + readPick() + "\")");
+                    string p2 = w2.Save(); w2.Dispose();
+                    var d3 = SessionDoc.Load(p2); var groups = d3.Groups();
+                    check(groups.Count == 2 && groups[0][0].Task == "1 Add an item" && groups[1][0].Task == "2 Pick one" && groups[1][0].BreakBefore, "tasks: the session is grouped by task (" + groups.Count + " groups: " + string.Join(" | ", groups.Select(g => g[0].Task + " x" + g.Count).ToArray()) + ")");
+                    check(d3.Steps[2].Param == "pick" && !d3.Steps[2].Typed && d3.Steps[2].Label == "" && d3.Steps[0].StepText.StartsWith("Enter the item name") && d3.Steps[2].ActionCode == "2.1", "tasks: the chosen option's name is not stored; the action text is");
+                    check(System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(p2)).IndexOf("\"Beta\"") < 0 && System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(p2)).IndexOf("Delta") < 0, "tasks: neither the typed value nor the chosen option is in the file");
+                    var sum = SessionDoc.ReadSummary(p2);
+                    check(sum != null && sum.Tasks == 2 && sum.TaskNames.Count == 2 && sum.Specs.Count == 2 && sum.Specs[0].Optional && sum.Specs[0].Label == "Item name" && sum.Specs[1].Task == "2 Pick one", "tasks: the summary lists tasks and the inputs to ask for");
+                    reset();
+                    var rr = Replayer.Run(d3, new Replayer.Options { ShowBar = false, Values = new Dictionary<string, string> { { "pick", "Gamma" } } });
+                    check(rr.Ok && rr.Log.Any(x => x.Contains("skipped")) && readPick() == "Picked: Gamma" && read() == "Added: ", "tasks: replay chose a different option and skipped the blank optional input (" + (rr.Ok ? readPick() : rr.Error) + ")");
+                    check(SessionDoc.Load(rr.Saved).Groups().Count == 2, "tasks: the replay's own session is grouped by task too");
+                    var export2 = GuideExport.Write(d3, dir); var cj = File.ReadAllText(Path.Combine(export2, "clicks.json"));
+                    check(cj.Contains("\"task\":\"2 Pick one\"") && cj.Contains("Enter the item name"), "tasks: the guide folder carries each task and the action text");
+
+                    doc.Procedure = null;
+                    var miss = Replayer.Run(doc, new Replayer.Options { ShowBar = false });
+                    check(!miss.Ok && miss.Error.Contains("item_name"), "a missing input value is refused before anything is clicked: " + miss.Error);
+
+                    // a target that is not there: stops, names the step
+                    var d2 = SessionDoc.Load(path); d2.Steps[1].Label = "No such button"; d2.Steps[1].TestId = "";
+                    var bad = Replayer.Run(d2, new Replayer.Options { ShowBar = false, AllowCoords = false, FindTimeoutMs = 1500, Values = new Dictionary<string, string> { { "item_name", "X" } } });
+                    check(!bad.Ok && bad.Error.StartsWith("Step 2") && bad.Done == 1, "a missing control stops the run at that step: " + bad.Error);
+
+                    // the same thing through the control channel
+                    RemoteControl.Start(); System.Threading.Thread.Sleep(400);
+                    Func<string, string> cmd = delegate(string json)
+                    {
+                        string o = Path.Combine(dir, "reply.json"); if (File.Exists(o)) File.Delete(o);
+                        RemoteControl.Client(new[] { "--cmd", json, "--out", o }); return File.Exists(o) ? File.ReadAllText(o) : "";
+                    };
+                    check(cmd("{\"cmd\":\"ping\"}").Contains("\"ok\":true"), "control channel answers");
+                    check(cmd("{\"cmd\":\"windows\"}").Contains("SnapLite Driver Test"), "control: windows lists the test window");
+                    string win0 = "\"window\":{\"process\":\"" + Me + "\",\"title\":\"SnapLite Driver Test\"}";
+                    string obs = cmd("{\"cmd\":\"observe\"," + win0 + "}");
+                    check(obs.Contains("\"Add item\"") && obs.Contains("\"Item name\"") && obs.Contains(".png"), "control: observe sees both controls and saved a screenshot");
+                    reset();
+                    check(cmd("{\"cmd\":\"session-start\",\"name\":\"Via control\"}").Contains("\"ok\":true"), "control: session started");
+                    check(cmd("{\"cmd\":\"type\"," + win0 + ",\"target\":{\"label\":\"Item name\",\"role\":\"Edit\"},\"text\":\"Omega\",\"param\":\"item_name\"}").Contains("\"ok\":true"), "control: type");
+                    check(cmd("{\"cmd\":\"click\"," + win0 + ",\"target\":{\"label\":\"Add item\"},\"stepText\":\"Add it\"}").Contains("\"ok\":true"), "control: click");
+                    check(read() == "Added: Omega", "control: the app got it (\"" + read() + "\")");
+                    string end = cmd("{\"cmd\":\"session-end\"}");
+                    check(end.Contains("\"steps\":2") && end.Contains("item_name"), "control: session saved with its input slot");
+                    check(cmd("{\"cmd\":\"click\"," + win0 + ",\"target\":{\"label\":\"Add item\"}}").Contains("\"ok\":false"), "control: acting with no session is refused");
+                }
+                catch (Exception ex) { check(false, "exception: " + ex); }
+            });
+            work.Start(); work.Join(180000);
+            try { form.Invoke((Action)delegate { form.Close(); }); } catch { }
+            File.WriteAllText(args[1], log.ToString() + (ok ? "ALL PASSED" : "SOME FAILED"));
+            return ok ? 0 : 1;
+        }
 
         // read a Process Manager export and show what Claude would do with every action. args: --proc-test <log> <xlsx or csv>
         public static int ProcTest(string[] args)
@@ -310,7 +449,7 @@ namespace SnapLite
         {
             var log = new System.Text.StringBuilder(); bool ok = true;
             Action<bool, string> check = delegate(bool c, string m) { log.AppendLine((c ? "PASS  " : "FAIL  ") + m); if (!c) ok = false; };
-            string dir = args[2]; Directory.CreateDirectory(dir); Settings.Folder = dir;
+            string dir = args[2]; Directory.CreateDirectory(dir); Settings.Folder = dir; SessionWriter.NoLibrary = true;
             var doc = new SessionDoc { Id = SessionDoc.NewId(), Name = "Editor test", StartedAt = DateTime.Now };
             byte[] png1, png2, png3;
             using (var b = new Bitmap(1600, 900)) using (var g = Graphics.FromImage(b)) { g.Clear(Color.FromArgb(240, 244, 250)); g.FillRectangle(Brushes.White, 100, 100, 600, 80); png1 = SessionDoc.Encode(b); g.FillRectangle(Brushes.LightGoldenrodYellow, 100, 300, 600, 200); png2 = SessionDoc.EncodeJpeg(b); g.Clear(Color.LightGray); png3 = SessionDoc.Encode(b); }
@@ -432,16 +571,142 @@ namespace SnapLite
             f.Close(); File.WriteAllText(args[1], log.ToString()); return 0;
         }
 
-        // the About window. args: --capture-shot <png prefix>
+        // the "what to capture, is the screen ready" form. args: --capture-shot <png prefix>
         public static int CaptureShot(string[] args)
         {
+            var ctor = typeof(CaptureTargetForm).GetConstructors(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)[0];
+            foreach (bool region in new[] { true, false })
+            {
+                var f = (Form)ctor.Invoke(new object[] { "Record a session", "Choose what to record. Every click inside it becomes a numbered step with a screenshot.", "Start recording", "window", region });
+                f.StartPosition = FormStartPosition.Manual; f.Location = new Point(60, 40); f.TopMost = false; f.Show(); Application.DoEvents(); System.Threading.Thread.Sleep(400); Application.DoEvents();
+                var ready = f.Controls.OfType<CheckBox>().First(); ready.Checked = true; Application.DoEvents();
+                using (var b = Shot(f)) b.Save(args[1] + (region ? "-region.png" : "-claude.png"), ImageFormat.Png);
+                f.Close();
+            }
             var about = new AboutForm { StartPosition = FormStartPosition.Manual, Location = new Point(60, 40) }; about.Show(); Application.DoEvents(); System.Threading.Thread.Sleep(300); Application.DoEvents();
             using (var b = Shot(about)) b.Save(args[1] + "-about.png", ImageFormat.Png); about.Close();
             return 0;
         }
 
+        // the three pages of the procedure wizard, and the values form. args: --wizard-shot <prefix> <xlsx>
+        public static int WizardShot(string[] args)
+        {
+            var w = new ProcedureWizard(); w.StartPosition = FormStartPosition.Manual; w.Location = new Point(60, 40); w.Show(); Application.DoEvents();
+            Action snap = delegate { Application.DoEvents(); System.Threading.Thread.Sleep(300); Application.DoEvents(); };
+            snap(); using (var b = Shot(w)) b.Save(args[1] + "-1-file.png", ImageFormat.Png);
+            w.LoadFile(args[2]); snap(); w.Preview(0, 0); snap(); using (var b = Shot(w)) b.Save(args[1] + "-2-activity.png", ImageFormat.Png);
+            w.Preview(0, 1); snap(); using (var b = Shot(w)) b.Save(args[1] + "-3-actions.png", ImageFormat.Png);
+            w.Preview(0, 2); snap(); using (var b = Shot(w)) b.Save(args[1] + "-4-values.png", ImageFormat.Png);
+            w.Close(); return 0;
+        }
 
+        // pictures of the ClickBot tab: empty, with sample sessions, and after a stopped run. args: --bot-shot <prefix> <folder>
+        public static int BotShot(string[] args)
+        {
+            string dir = args[2], realFolder = Settings.Folder, realTab = Settings.CapTab; Directory.CreateDirectory(dir); Settings.Folder = dir; SessionWriter.NoLibrary = true;
+            foreach (var f in Directory.GetFiles(dir, "*" + SessionDoc.Ext)) File.Delete(f);
+            var hub = new Hub(); hub.StartPosition = FormStartPosition.Manual; hub.Location = new Point(40, 40); hub.Show(); Application.DoEvents();
+            hub.TopMost = true; hub.SetTab("bot"); hub.Activate(); Application.DoEvents(); System.Threading.Thread.Sleep(500); Application.DoEvents();
+            using (var bmp = Shot(hub)) bmp.Save(args[1] + "-empty.png", ImageFormat.Png);
+            File.WriteAllText(args[1] + "-size.txt", "K " + Dpi.K + ", window " + hub.Size + ", client " + hub.ClientSize + ", wanted client " + Dpi.S(890, 442) + ", screen work area " + Screen.FromControl(hub).WorkingArea + ", location " + hub.Location);
 
+            Func<string, int, string, string, string[], SessionDoc> make = delegate(string name, int steps, string app, string title, string[] inputs)
+            {
+                var d = new SessionDoc { Id = SessionDoc.NewId() + name.Length, Name = name, StartedAt = DateTime.Now.AddMinutes(-30) };
+                var ps = new Dictionary<string, object>();
+                foreach (var i in inputs) ps[i] = new Dictionary<string, object> { { "type", "text" }, { "default", i == "quantity" ? "1" : "" } };
+                if (inputs.Length > 0) d.Procedure = new Dictionary<string, object> { { "name", name }, { "params", ps } };
+                using (var bmp = new Bitmap(800, 450)) using (var g = Graphics.FromImage(bmp)) { g.Clear(Theme.Sheet); g.FillRectangle(Brushes.White, 40, 40, 720, 60); var png = SessionDoc.Encode(bmp);
+                    for (int s = 0; s < steps; s++)
+                        d.Steps.Add(new SessionStep { Seq = s + 1, BreakBefore = s % 3 == 0, Frame = s % 3 == 0 ? png : null, Vw = 800, Vh = 450, Box = new Rectangle(60, 50, 100, 30), Label = "Item " + s, Role = "Button", Url = "app://" + app + "/" + title, Title = title, Param = s == 1 && inputs.Length > 0 ? inputs[0] : "", Typed = s == 1 && inputs.Length > 0 }); }
+                d.Renumber(); return d;
+            };
+            var a = make("Create a cost item", 6, "msedge", "InEight Control", new[] { "cost_item_name", "quantity" }); a.Save(a.DefaultPath(dir));
+            System.Threading.Thread.Sleep(1100);
+            var b = make("Approve a LEM", 9, "InEight.Estimate", "Estimate", new string[0]); b.Save(b.DefaultPath(dir));
+            System.Threading.Thread.Sleep(1100);
+            var c = make("Replay - Create a cost item (09.41.12)", 6, "msedge", "InEight Control", new[] { "cost_item_name" }); c.Save(c.DefaultPath(dir));
+            hub.SetTab("image"); Application.DoEvents(); hub.SetTab("bot"); Application.DoEvents(); System.Threading.Thread.Sleep(500); Application.DoEvents();
+            using (var bmp = Shot(hub)) bmp.Save(args[1] + "-list.png", ImageFormat.Png);
+
+            // a run that stopped at step 4
+            var panel = hub.Controls.Cast<Control>().SelectMany(x => x is Card ? x.Controls.Cast<Control>() : new Control[0]).OfType<ClickBotPanel>().FirstOrDefault();
+            if (panel != null)
+            {
+                var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                ((ListBox)typeof(ClickBotPanel).GetField("list", flags).GetValue(panel)).SelectedIndex = 2;
+                Application.DoEvents(); System.Threading.Thread.Sleep(300); Application.DoEvents();
+                using (var bmp = Shot(hub)) bmp.Save(args[1] + "-inputs.png", ImageFormat.Png);
+                var ribbon = (StepRibbon)typeof(ClickBotPanel).GetField("ribbon", flags).GetValue(panel);
+                ribbon.Reset(6); ribbon.Set(1, 2); ribbon.Set(2, 2); ribbon.Set(3, 3); ribbon.Set(4, 4);
+                var res = new Replayer.Result { Total = 6, Done = 3, Error = "Step 4 (Click \"Save\" button): Could not find \"Save\" (Button) in \"InEight Control\"." };
+                var st = typeof(ClickBotPanel).GetMethod("Say", flags); st.Invoke(panel, new object[] { res.Error + "\r\nA control may have been renamed, or the screen is different. Open this run to see where it stopped.", Theme.Mark });
+                ((LinkLabel)typeof(ClickBotPanel).GetField("openRun", flags).GetValue(panel)).Visible = true; ((LinkLabel)typeof(ClickBotPanel).GetField("openOrig", flags).GetValue(panel)).Visible = true;
+                var title = (Label)typeof(ClickBotPanel).GetField("title", flags).GetValue(panel); title.Text = title.Text;
+                typeof(ClickBotPanel).GetMethod("DoLayout", flags).Invoke(panel, null);
+                Application.DoEvents(); System.Threading.Thread.Sleep(300); Application.DoEvents();
+                using (var bmp = Shot(hub)) bmp.Save(args[1] + "-stopped.png", ImageFormat.Png);
+            }
+            hub.SetTab("session"); Application.DoEvents(); System.Threading.Thread.Sleep(300); Application.DoEvents();
+            using (var bmp = Shot(hub)) bmp.Save(args[1] + "-sessions-tab.png", ImageFormat.Png);
+            hub.SetTab("image"); hub.TopMost = false;
+            Settings.Folder = realFolder; Settings.CapTab = realTab; Settings.Save();     // a picture check must not change the person's settings
+            hub.Quit(); return 0;
+        }
+
+        // the same, against a web page in a real browser (UI Automation sees page elements). args: --browser-test <log> <folder> <browser exe>
+        public static int BrowserTest(string[] args)
+        {
+            var log = new System.Text.StringBuilder(); bool ok = true;
+            Action<bool, string> check = delegate(bool c, string m) { log.AppendLine((c ? "PASS  " : "FAIL  ") + m); if (!c) ok = false; };
+            string dir = args[2]; Directory.CreateDirectory(dir); Settings.Folder = dir; SessionWriter.NoLibrary = true;
+            string page = Path.Combine(dir, "form.html");
+            File.WriteAllText(page, "<!doctype html><html><head><title>SnapLite Browser Test</title></head><body><h1>Add an item</h1>" +
+                "<label for=n>Item name</label> <input id=n type=text> <button id=b onclick=\"document.getElementById('r').textContent='Added: '+document.getElementById('n').value\">Add item</button><p id=r></p></body></html>");
+            string exe = args[3]; string profile = Path.Combine(dir, "profile");
+            var proc = System.Diagnostics.Process.Start(exe, "--new-window --no-first-run --no-default-browser-check --user-data-dir=\"" + profile + "\" \"" + new Uri(page).AbsoluteUri + "\"");
+            string pn = Path.GetFileNameWithoutExtension(exe);
+            var work = new System.Threading.Thread(delegate()
+            {
+                try
+                {
+                    var win = Driver.FindWindow(pn, "SnapLite Browser Test", 30000);
+                    check(win != null, "the browser window opened");
+                    if (win == null) return;
+                    System.Threading.Thread.Sleep(2500);
+                    var w = new SessionWriter("Browser test", new Dictionary<string, object> { { "name", "Browser test" } });
+                    var t1 = new Target { Process = pn, Title = "SnapLite Browser Test", Label = "Item name", Role = "Edit" };
+                    var t2 = new Target { Process = pn, Title = "SnapLite Browser Test", Label = "Add item", Role = "Button" };
+                    var o1 = Driver.Perform(w, t1, "type", "Zeta", "item_name", "", new Driver.Options { FindTimeoutMs = 20000 });
+                    check(o1.Ok, "learning: typed into the page's text box (" + (o1.Ok ? o1.Method : o1.Error) + ")");
+                    var o2 = Driver.Perform(w, t2, "click", null, "", "", new Driver.Options { FindTimeoutMs = 20000 });
+                    check(o2.Ok, "learning: clicked the page's button (" + (o2.Ok ? o2.Method : o2.Error) + ")");
+                    Func<string, bool> shows = delegate(string text)
+                    {
+                        for (int i = 0; i < 20; i++)
+                        {
+                            var ww = Driver.FindWindow(pn, "SnapLite Browser Test", 2000);
+                            if (ww != null) foreach (System.Windows.Automation.AutomationElement e in ww.FindAll(System.Windows.Automation.TreeScope.Descendants, new System.Windows.Automation.PropertyCondition(System.Windows.Automation.AutomationElement.NameProperty, text))) return true;
+                            System.Threading.Thread.Sleep(300);
+                        }
+                        return false;
+                    };
+                    check(shows("Added: Zeta"), "the page shows \"Added: Zeta\"");
+                    string path = w.Save(); w.Dispose();
+                    var doc = SessionDoc.Load(path);
+                    check(doc.Steps[0].UrlBar.Contains("form.html"), "the page address was captured: \"" + doc.Steps[0].UrlBar + "\"");
+                    check(doc.Steps[0].TestId == "n", "the page element's id was captured as the test id: \"" + doc.Steps[0].TestId + "\"");
+                    var r = Replayer.Run(doc, new Replayer.Options { ShowBar = false, FindTimeoutMs = 20000, Values = new Dictionary<string, string> { { "item_name", "Eta" } } });
+                    check(r.Ok, "replay with a different value ran" + (r.Ok ? "" : ": " + r.Error + " | " + string.Join(" | ", r.Log.ToArray())));
+                    check(shows("Added: Eta"), "the page shows \"Added: Eta\" after the replay");
+                }
+                catch (Exception ex) { check(false, "exception: " + ex); }
+            });
+            work.Start(); work.Join(240000);
+            try { foreach (var p in System.Diagnostics.Process.GetProcessesByName(pn)) { try { if (p.StartInfo != null && p.MainWindowTitle.Contains("SnapLite Browser Test")) p.CloseMainWindow(); } catch { } } } catch { }
+            File.WriteAllText(args[1], log.ToString() + (ok ? "ALL PASSED" : "SOME FAILED"));
+            return ok ? 0 : 1;
+        }
 
         // read real ClickTrail files, re-save copies, reload them, and render the first screen of each
         public static int SessionTest(string[] args)
@@ -557,11 +822,13 @@ namespace SnapLite
             run("cursor", delegate { using (var f = new CursorOptionsForm()) f.ShowDialog(host); });
             run("about", delegate { using (var f = new AboutForm()) f.ShowDialog(host); });
             run("settings", delegate { using (var f = new SettingsForm()) f.ShowDialog(host); });
+            run("target", delegate { CaptureTargetForm.Ask(host, "Where should Claude capture?", "Claude captures one window, or the full screen.", "Start", "window", false); });
             run("slideoptions", delegate { using (var f = new SlidePackOptionsForm(@"C:\Templates\Ventia Template 1.pptx", "")) f.ShowDialog(host); });
             run("slidedone", delegate { string d = @"C:\Users\Someone\Pictures\Close the issue - slide pack"; using (var f = new SlidePackDoneForm(d, SlidePack.Prompt(d, "Close the issue"), true)) f.ShowDialog(host); });
             run("checklist", delegate { var act = SampleActivity(); SessionRecorder.BeginPlan(act); SessionRecorder.ToggleDoneForTest(0); SessionRecorder.ToggleDoneForTest(1); ChecklistForm.PreviewSteps = 14; using (var f = new ChecklistForm(act, Screen.PrimaryScreen)) f.ShowDialog(host); ChecklistForm.PreviewSteps = null; });
             run("recpanel", delegate { RecordingPanel.PreviewSteps = 14; RecordingPanel.PreviewLast = "Click \"Save\" button"; using (var f = new RecordingPanel(Screen.PrimaryScreen)) f.ShowDialog(host); RecordingPanel.PreviewSteps = null; RecordingPanel.PreviewLast = null; });
             if (vid != null) { run("videodone", delegate { using (var f = new VideoDone(vid)) f.ShowDialog(host); }); run("trim", delegate { using (var f = new TrimForm(vid)) f.ShowDialog(host); }); }
+            if (sess != null) { run("replay", delegate { using (var f = new ReplayDialog(SessionDoc.Load(sess))) f.ShowDialog(host); }); }
             var doc = new Doc(new Bitmap(800, 500)) { Name = "t" }; var ed = EditorForm.Show(doc); Application.DoEvents();
             Action<string, string, object[]> viaEditor = delegate(string name, string method, object[] a)
             {
@@ -698,7 +965,7 @@ namespace SnapLite
                 Directory.CreateDirectory(args[3]); var doc = SessionDoc.Load(args[2]); var groups = doc.Groups();
                 for (int gi = 0; gi < groups.Count; gi++) foreach (var s in groups[gi]) { s.Task = gi < 2 ? "6.1 Open the project" : "6.2 Next task"; s.ActionCode = "6.1." + (gi + 1); }
                 groups[0][0].StepText = "Navigate to the main menu";
-                doc.Procedure = ProcedureFile.ProcedureObject(act, new List<InputSpec>()); if (args.Length > 4 && File.Exists(args[4])) doc.Procedure["source"] = args[4];
+                doc.Procedure = ProcedureFile.ProcedureObject(act, new List<InputSpec>(), null); if (args.Length > 4 && File.Exists(args[4])) doc.Procedure["source"] = args[4];
                 groups[0][0].TextPos = new PointF(-420, 60);
                 string tpl = args.Length > 5 && File.Exists(args[5]) ? args[5] : Path.Combine(args[3], "my template.pptx"); if (!File.Exists(tpl)) File.WriteAllText(tpl, "not really a deck");
                 string dir = SlidePack.Write(doc, args[3], tpl);
@@ -1026,6 +1293,29 @@ namespace SnapLite
             hub.Begin(Modes.All[0]);
             for (int i = 0; i < 200 && !done; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(30); }
             log.AppendLine(ok ? "ALL PASSED" : "SOME FAILED"); File.WriteAllText(args[1], log.ToString()); Environment.Exit(ok ? 0 : 1); return ok ? 0 : 1;
+        }
+        // the Claude status window, fed the same events the control channel raises. args: --status-shot <prefix>
+        public static int StatusShot(string[] args)
+        {
+            var f = new ClaudeStatusForm("Raise Issue", 5); f.Show(); Application.DoEvents();
+            var raise = typeof(RemoteControl).GetMethod("Raise", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            Action<string, string, string, string> ev = delegate(string kind, string task, string code, string text)
+            {
+                var d = new Dictionary<string, object> { { "task", task }, { "actionCode", code }, { "stepText", text } }; raise.Invoke(null, new object[] { kind, d });
+                for (int i = 0; i < 6; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(60); }
+            };
+            Action<string> snap = delegate(string n) { Application.DoEvents(); System.Threading.Thread.Sleep(200); Application.DoEvents(); using (var b = new Bitmap(f.Width, f.Height)) { using (var g = Graphics.FromImage(b)) g.CopyFromScreen(f.Location, Point.Empty, f.Size); b.Save(args[1] + "-" + n + ".png", ImageFormat.Png); } };
+            snap("start");
+            ev("cmd:click", "3.1 Navigate to the Issue log register", "3.1.1", "Click the hamburger menu"); ev("ok:click", "", "", "");
+            ev("cmd:click", "3.1 Navigate to the Issue log register", "3.1.2", "Select the \"Project\" under Favorites"); ev("ok:click", "", "", "");
+            ev("cmd:type", "3.3 Enter the issue details", "3.3.1", "Enter the issue name in \"Issue name\"");
+            snap("working");
+            ev("ok:type", "", "", "");
+            f.Finish(true, "Saved the session Raise Issue with 12 steps.", "", "C:\\x\\Raise Issue.clicktrail"); snap("done");
+            var f2 = new ClaudeStatusForm("Raise Issue", 5); f2.Location = new Point(f.Left, f.Top - f.Height - 20); f2.Show(); Application.DoEvents();
+            f2.Finish(false, "The window \"Change\" was not found. Open InEight and try again.", "", ""); Application.DoEvents(); System.Threading.Thread.Sleep(300); Application.DoEvents();
+            using (var b = new Bitmap(f2.Width, f2.Height)) { using (var g = Graphics.FromImage(b)) g.CopyFromScreen(f2.Location, Point.Empty, f2.Size); b.Save(args[1] + "-failed.png", ImageFormat.Png); }
+            f2.Close(); f.Close(); return 0;
         }
         // a crafted project file must not be able to run code or exhaust memory. args: --security-test <log> <folder>
         public static int SecurityTest(string[] args)
