@@ -34,6 +34,7 @@ namespace SnapLite
             if (args.Length >= 1 && args[0] == "--rec-test") return DevChecks.RecTest(args);
             if (args.Length >= 1 && args[0] == "--doc-test") return DevChecks.DocTest(args);
             if (args.Length >= 1 && args[0] == "--overlay-shot") return DevChecks.OverlayShot(args);
+            if (args.Length >= 1 && args[0] == "--smartpick-test") return DevChecks.SmartPickTest(args);
             if (args.Length >= 1 && args[0] == "--grab-timing") return DevChecks.GrabTiming(args);
             if (args.Length >= 1 && args[0] == "--tray-hover") return DevChecks.TrayHoverShot(args);
             if (args.Length >= 1 && args[0] == "--presets-shot") return DevChecks.PresetsShot(args);

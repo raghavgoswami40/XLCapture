@@ -37,6 +37,7 @@ try {
   $sess = @(Get-ChildItem $data -Filter *.clicktrail -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName)[0]
   Run "a crafted project file is refused" @('--security-test', "`"$Work\security.log`"", "`"$Work\security`"") "$Work\security.log" 120 "ALL PASSED"
   Run "checklist ticks and the recording area" @('--plan-test', "`"$Work\plan.log`"") "$Work\plan.log" 60 "ALL PASSED"
+  Run "picture and video picks click a window like a session does" @('--smartpick-test', "`"$Work\smartpick.log`"") "$Work\smartpick.log" 60 "ALL PASSED"
   Run "canvas picks up an existing shape" @('--pick-test', "`"$Work\pick.log`"") "$Work\pick.log" 60 "ALL PASSED"
   Run "editor opens without an exception" @('--open-editor', "`"$Work\open-editor.log`"") "$Work\open-editor.log" 60 "done"
   if ($sess -and (Test-Path $sess)) {

@@ -19,6 +19,7 @@ headed columns (Capture: Selection, Effects and Share; Options: Preview in edito
 Cursor and Time delay); the round Capture button (red Record on the Video and Sessions tabs) with its
 hotkey shown as keys, and Reset tab under it; Presets, Save preset and "Open XLCapture Editor" along the bottom.
 All-in-One: click a window or drag an area, then choose Image, Video, GIF, Scroll, Panorama or Text.
+The pick screen is the same for All-in-One, Region, Scrolling window, Panorama, Video, GIF and Sessions: the window or pane under the pointer is highlighted (a browser shows just its page), a click takes it, a drag takes the area drawn, the wheel steps to a larger or smaller area, and F takes the whole monitor.
 Screen Draw is not built yet and is not shown; Camera and System audio are greyed out when no device is found.
 
 **XLCapture Editor**: menu bar; a ribbon with Editor / Library / Capture / Create, the centred tool group
@@ -96,7 +97,7 @@ Studied with REA from the ClickTrail desktop app, then rebuilt natively.
 | Element name and role from UI Automation; ClickTrail's box-size rules for the highlight | Built |
 | Typing and scrolling folded into steps (toggles on the tab); new screen when the window changes | Built |
 | Floating recording bar (or panel, on a second monitor) with step count, Switch window, Pause, Stop, **Start again** (throws away the steps so far; a continued session goes back to how it was saved) and **Cancel** (throws the recording away, nothing is saved); both ask first when there are steps. Hidden from its own screenshots | Built |
-| Follow a procedure (optional, on the Sessions tab): choose a Process Manager export (.xlsx or .csv) and an activity; a checklist panel shows its tasks and actions while you record, and each step carries its task and action | Tested on a real Process Manager export |
+| Follow a procedure (beta, optional, on the Sessions tab): choose a Process Manager export (.xlsx or .csv) and an activity; a checklist panel shows its tasks and actions while you record, and each step carries its task and action | Tested on a real Process Manager export |
 | `.clicktrail` files: read ClickTrail's files, save ones ClickTrail can open | Tested on 5 real ClickTrail sessions (load, re-save, reload identical) |
 | Session view in the editor: rename, edit / delete / reorder steps, browse screens | Rendering tested |
 | Edit a screen as a normal picture; export pictures; export a PDF guide | Built |

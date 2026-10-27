@@ -211,7 +211,7 @@ namespace XLCaptureSetup
         {
             busy = false; close.Enabled = true;
             if (err != null) { title.Text = "Setup could not finish"; body.Text = err; status.Text = ""; go.Text = "Try again"; go.Enabled = true; foreach (Control c in new Control[] { folder, desktop, startup, launch }) c.Enabled = true; return; }
-            title.Text = "XLCapture is installed"; body.Text = "Find it in the Start menu" + (o.Desktop ? " and on the desktop" : "") + ". To remove it later, use Windows Settings > Apps, or Uninstall in " + o.Folder + ".\r\n\r\nClickBot's \"Teach with Claude\" also needs Claude Code on this PC, signed in.";
+            title.Text = "XLCapture is installed"; body.Text = "Find it in the Start menu" + (o.Desktop ? " and on the desktop" : "") + ". To remove it later, use Windows Settings > Apps, or Uninstall in " + o.Folder + ".\r\n\r\nThe slide pack export also needs Claude Code on this PC, signed in.";
             status.Text = ""; go.Text = "Finish"; go.Enabled = true; close.Visible = false; launch.Enabled = true; folder.Visible = false; desktop.Visible = false; startup.Visible = false;
             foreach (Control c in Controls) if (c is Label && c != title && c != body && c != status) c.Visible = false;
             foreach (Control c in Controls) if (c is Button && c.Text == "Browse...") c.Visible = false;

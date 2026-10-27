@@ -31,7 +31,7 @@ namespace SnapLite
     static class Brand
     {
         public const string Name = "XLCapture", EditorName = "XLCapture Editor";
-        public const string Version = "1.0.0";                                  // shown to people and used to name the installer
+        public const string Version = "1.1.0";                                  // shown to people and used to name the installer
         public static readonly Color Dark = Color.FromArgb(21, 21, 21);          // the logos' own background
         public static readonly Color Gold = Color.FromArgb(255, 195, 0);          // the logos' yellow
         static Bitmap mark, full; static Icon icon;

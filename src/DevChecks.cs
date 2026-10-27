@@ -172,6 +172,8 @@ namespace SnapLite
             using (var bmp = Shot(hub)) bmp.Save(args[1].Replace(".png", "-video.png"), ImageFormat.Png);
             hub.SetTab("aio"); Application.DoEvents(); System.Threading.Thread.Sleep(400); Application.DoEvents();
             using (var bmp = Shot(hub)) bmp.Save(args[1].Replace(".png", "-aio.png"), ImageFormat.Png);
+            hub.SetTab("session"); Application.DoEvents(); System.Threading.Thread.Sleep(400); Application.DoEvents();
+            using (var bmp = Shot(hub)) bmp.Save(args[1].Replace(".png", "-session.png"), ImageFormat.Png);
             hub.SetTab("image"); hub.TopMost = false;
             if (args.Length > 2)
             {
@@ -261,6 +263,34 @@ namespace SnapLite
             return 0;
         }
 
+        // the picture and video modes pick the way a session does: a click takes the highlighted window or pane, a drag takes the area drawn. args: --smartpick-test <log>
+        public static int SmartPickTest(string[] args)
+        {
+            var log = new System.Text.StringBuilder(); bool all = true;
+            Action<bool, string> chk = delegate(bool ok, string what) { log.AppendLine((ok ? "PASS " : "FAIL ") + what); if (!ok) all = false; };
+            var nb = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance; var T = typeof(PickOverlay);
+            var vs = SystemInformation.VirtualScreen; var win = new Rectangle(300, 200, 640, 480); var area = new Rectangle(50, 60, 120, 90);
+            using (var fake = new Bitmap(vs.Width, vs.Height))
+            {
+                foreach (var mode in new[] { CapMode.Region, CapMode.Scroll, CapMode.ScrollH, CapMode.Video, CapMode.Gif, CapMode.Session, CapMode.Window, CapMode.Text })
+                    foreach (bool dragged in new[] { false, true })
+                    {
+                        PickResult r;
+                        using (var ov = new PickOverlay(fake, mode))
+                        {
+                            T.GetField("hover", nb).SetValue(ov, win); T.GetField("sel", nb).SetValue(ov, dragged ? area : Rectangle.Empty);
+                            T.GetMethod("Finish", nb).Invoke(ov, new object[] { true }); r = ov.Result;
+                        }
+                        string what = mode + (dragged ? ", drag" : ", click");
+                        if (mode == CapMode.Text)        // text is taken from an area only
+                            chk(dragged ? (!r.Cancel && r.Rect == area) : r.Cancel, what + (dragged ? " takes the area drawn" : " takes nothing"));
+                        else if (mode == CapMode.Window) chk(!r.Cancel && r.Rect == win, what + " takes the highlighted window");
+                        else chk(!r.Cancel && r.Rect == (dragged ? area : win) && r.Dragged == dragged, what + (dragged ? " takes the area drawn" : " takes the highlighted window or pane"));
+                    }
+            }
+            log.AppendLine(all ? "ALL PASSED" : "SOME FAILED"); File.WriteAllText(args[1], log.ToString()); return all ? 0 : 1;
+        }
+
         // render the capture overlay in three states from a picture standing in for the screen
         public static int OverlayShot(string[] args)
         {
@@ -276,6 +306,8 @@ namespace SnapLite
                     using (var b = ov.Snapshot(c, true, false)) b.Save(args[2] + "-fullscreen.png", ImageFormat.Png);
                     using (var b = ov.Snapshot(c, false, true)) b.Save(args[2] + "-help.png", ImageFormat.Png);
                 }
+                foreach (var m in new[] { CapMode.Region, CapMode.Video })      // the picture and video picks highlight the window under the pointer, like a session
+                    using (var ov = new PickOverlay(fake, m)) using (var b = ov.Snapshot(c, false, false)) b.Save(args[2] + "-" + m.ToString().ToLowerInvariant() + ".png", ImageFormat.Png);
             }
             return 0;
         }

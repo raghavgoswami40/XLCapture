@@ -95,8 +95,11 @@ namespace SnapLite
         }
 
         // ---- which features this mode offers
-        bool Snaps { get { return mode == CapMode.Window || mode == CapMode.AllInOne || mode == CapMode.Session; } }
-        bool AioLike { get { return mode == CapMode.AllInOne || mode == CapMode.Session; } }
+        // Smart pick, the same as when a session is recorded: the window or pane under the pointer is highlighted (a browser shows just its page), a click takes it,
+        // a drag takes the area drawn, the wheel steps to a larger or smaller area and F takes the monitor. Used by the picture modes that take an area and by video and GIF.
+        bool Smart { get { return mode == CapMode.Region || mode == CapMode.Scroll || mode == CapMode.ScrollH || mode == CapMode.Video || mode == CapMode.Gif; } }
+        bool Snaps { get { return mode == CapMode.Window || mode == CapMode.AllInOne || mode == CapMode.Session || Smart; } }
+        bool AioLike { get { return mode == CapMode.AllInOne || mode == CapMode.Session || Smart; } }
         bool FullscreenAllowed { get { return mode == CapMode.AllInOne || mode == CapMode.Session || mode == CapMode.Region || mode == CapMode.Window || mode == CapMode.Video || mode == CapMode.Gif || mode == CapMode.Text; } }
         bool RegionAllowed { get { return mode == CapMode.AllInOne || mode == CapMode.Session || mode == CapMode.Region || mode == CapMode.Video || mode == CapMode.Gif || mode == CapMode.Text || mode == CapMode.Scroll || mode == CapMode.ScrollH || mode == CapMode.Multi; } }
 
@@ -265,7 +268,7 @@ namespace SnapLite
             {
                 if (mode == CapMode.Multi) { Result.Areas = areas.ToList(); Result.Rect = areas.Aggregate(Rectangle.Union); }
                 else if (mode == CapMode.Freehand && poly != null) { Result.Poly = poly; Result.Rect = PolyBounds(poly); }
-                else if (mode == CapMode.Session) { bool drag = sel.Width >= 4 && sel.Height >= 4; Result.Rect = drag ? sel : hover; Result.Dragged = drag; }
+                else if (mode == CapMode.Session || Smart) { bool drag = sel.Width >= 4 && sel.Height >= 4; Result.Rect = drag ? sel : hover; Result.Dragged = drag; }
                 else Result.Rect = mode == CapMode.Window || mode == CapMode.Element ? hover : sel;
                 if (Result.Rect.Width < 2 || Result.Rect.Height < 2) Result.Cancel = true;
             }
@@ -562,8 +565,11 @@ namespace SnapLite
                     case CapMode.Fixed: t = "Click to place a " + fw + " x " + fh + " area. Arrows or wheel resize it"; break;
                     case CapMode.Multi: t = "Drag several areas, then Enter or right-click to finish"; break;
                     case CapMode.Freehand: t = "Hold the mouse button and draw around the area"; break;
-                    case CapMode.Scroll: t = "Drag over the scrolling area to capture"; break; case CapMode.ScrollH: t = "Drag over the horizontally scrolling area"; break;
-                    case CapMode.Text: t = "Drag over the text to copy"; break; case CapMode.Video: case CapMode.Gif: t = "Drag the area to record"; break;
+                    case CapMode.Region: t = "Click a window or panel (a browser: just its page), or drag an area     Wheel: larger or smaller area"; break;
+                    case CapMode.Scroll: t = "Click the scrolling window or panel, or drag over the scrolling area     Wheel: larger or smaller area"; break;
+                    case CapMode.ScrollH: t = "Click the horizontally scrolling window or panel, or drag over it     Wheel: larger or smaller area"; break;
+                    case CapMode.Text: t = "Drag over the text to copy"; break;
+                    case CapMode.Video: case CapMode.Gif: t = "Click the window to record (a browser: just its page), or drag the area     Wheel: larger or smaller area"; break;
                     default: t = "Drag to select an area"; break;
                 }
             t += (FullscreenAllowed && !choosing ? "     F full screen" : "") + "     F1 help     Esc cancel";

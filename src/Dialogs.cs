@@ -10,7 +10,7 @@ namespace SnapLite
     // colour as an outline. Optional icon on the left; with no text it is a round icon button.
     class FlatButton : Button
     {
-        public bool Primary, OnDark, Bare, Quiet, Chevron, ChevronUp; public Ic? Icon; public Color? Tone; bool hover, down;     // Tone: a filled button in another colour; Quiet: no edge until the pointer is on it (toolbar-style); Chevron: a small arrow after the text, for a button that opens a menu
+        public bool Primary, OnDark, Bare, Quiet, Chevron, ChevronUp; public string Badge; public Ic? Icon; public Color? Tone; bool hover, down;     // Tone: a filled button in another colour; Quiet: no edge until the pointer is on it (toolbar-style); Chevron: a small arrow after the text, for a button that opens a menu
         public FlatButton(string text, bool primary)
         {
             Text = text; Primary = primary; FlatStyle = FlatStyle.Flat; Cursor = Theme.Hand; UseMnemonic = false;
@@ -68,6 +68,13 @@ namespace SnapLite
             if (Focused && ShowFocusCues) using (var p = Theme.RoundRect(new RectangleF(ins + 1.5f, ins + 1.5f, r.Width - 3f, r.Height - 3f), Math.Max(1f, rad - 1.5f))) using (var pen = new Pen(OnDark || Primary ? Color.White : Theme.Accent, Dpi.F(1.5f))) g.DrawPath(pen, p);
             int tw = Text.Length == 0 ? 0 : TextRenderer.MeasureText(g, Text, Font, new Size(10000, 100), TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
             int cw = Chevron ? Dpi.S(18) : 0;
+            Rectangle badgeR = Rectangle.Empty;
+            if (!string.IsNullOrEmpty(Badge))       // a small tag at the right end of the button, such as "Beta"
+                using (var bf = Theme.Semi(7.5f))
+                {
+                    var bs = TextRenderer.MeasureText(g, Badge, bf, new Size(200, 40), TextFormatFlags.NoPadding); int bw = bs.Width + Dpi.S(14), bh = Dpi.S(18);
+                    badgeR = new Rectangle(Width - bw - Dpi.S(12), (Height - bh) / 2, bw, bh); cw += bw + Dpi.S(12);
+                }
             if (Chevron)        // a small down arrow on the right
             {
                 float cx = Width - Dpi.S(20), cy = Height / 2f, a = Dpi.F(4f);
@@ -77,6 +84,11 @@ namespace SnapLite
             int iw = Icon.HasValue ? IconSize : 0, gap = (Icon.HasValue && tw > 0) ? Dpi.S(8) : 0, total = iw + gap + tw, x = (Width - cw - total) / 2;
             if (Icon.HasValue) { Icons.Draw(g, Icon.Value, new RectangleF(x, (Height - IconSize) / 2f, IconSize, IconSize), ink); x += iw + gap; }
             if (tw > 0) TextRenderer.DrawText(g, Text, Font, new Rectangle(x, 0, Math.Max(10, Width - cw - x - Dpi.S(8)), Height), ink, TextFormatFlags.NoPadding | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+            if (!badgeR.IsEmpty)
+            {
+                using (var gp = Theme.Pill(badgeR)) using (var tagFill = new SolidBrush(Enabled ? Theme.AccentTint : Theme.Rule)) g.FillPath(tagFill, gp);
+                using (var bf = Theme.Semi(7.5f)) TextRenderer.DrawText(g, Badge, bf, badgeR, Enabled ? Theme.AccentDeep : Theme.Mist, TextFormatFlags.NoPadding | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
         }
     }
 

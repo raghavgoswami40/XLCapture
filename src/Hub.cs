@@ -285,7 +285,7 @@ namespace SnapLite
                 RowLabel("Open in", Dpi.S(20), 1, 92); RowCombo(1, new[] { "XLCapture Editor", "Folder only" }, Settings.SesOpenIn == "folder" ? 1 : 0, delegate(int i) { Settings.SesOpenIn = ok[i]; });
                 var hint = new Label { Text = "Press Record, then click a window (a browser: just its page) or drag an area. Clicks outside it are not recorded.", Location = new Point(Dpi.S(20), RowY(2) - Dpi.S(6)), Size = Dpi.S(300, 66), ForeColor = Theme.Slate, Font = Theme.Body(9.5f) };
                 card.Controls.Add(hint);
-                var procBtn = new FlatButton(Settings.SesProcFile.Length > 0 ? "Following: " + Settings.SesProcTitle : "Follow a procedure (optional)...", false) { Location = new Point(Dpi.S(20), RowY(2) + Dpi.S(64)), Size = Dpi.S(282, 34), Icon = Ic.Open, Font = Theme.Body(9.5f), AccessibleName = "Follow a procedure" };
+                var procBtn = new FlatButton(Settings.SesProcFile.Length > 0 ? "Following: " + Settings.SesProcTitle : "Follow a procedure (optional)...", false) { Location = new Point(Dpi.S(20), RowY(2) + Dpi.S(64)), Size = Dpi.S(282, 34), Icon = Ic.Open, Font = Theme.Body(9.5f), Badge = "Beta", AccessibleName = "Follow a procedure (beta)" };
                 procBtn.Click += delegate { PickProcedure(); };
                 card.Controls.Add(procBtn);
                 RowToggle(0, "Record typing", Settings.SesTyping, delegate(bool b) { Settings.SesTyping = b; }, null);
