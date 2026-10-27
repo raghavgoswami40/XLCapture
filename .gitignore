@@ -1,0 +1,13 @@
+﻿# built programs and installers: the release files are not kept in git
+*.exe
+dist/
+obj/
+bin/
+
+# internal documents about other XLYOUR projects and reviews: not part of the public code
+docs/
+
+# editor and machine files
+.vs/
+*.user
+.claude/settings.local.json
