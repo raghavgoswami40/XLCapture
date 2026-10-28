@@ -15,7 +15,7 @@ namespace SnapLite
     {
         readonly SessionDoc doc; readonly Action changed; readonly Panel preview; bool busy;
         readonly ThemedCheck showBoxes, showNum, showText, textNum; readonly ThemedCombo preset, shape, stepSize, tstyle, font, textSize, weight;
-        readonly ColorSwatch boxColor, stepColor, textColor, fillColor; readonly ThemedCombo fillOpacity; readonly Label fontNote; readonly FlatButton savePreset, delPreset;
+        readonly ColorSwatch boxColor, stepColor, textColor, fillColor; readonly ThemedCombo fillOpacity; readonly Label fontNote; readonly FlatButton savePreset, delPreset, makeDefault;
         static readonly int[] Sizes = { 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 40 };
         static readonly int[] TextSizes = { 10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48 };
         static readonly string[] Shapes = { "rect", "rounded", "ellipse" }, ShapeNames = { "Rectangle", "Rounded", "Ellipse" };
@@ -43,8 +43,10 @@ namespace SnapLite
             preset = Combo(m, y0, Dpi.S(260));
             savePreset = new FlatButton("Save as preset...", false) { Location = new Point(m + Dpi.S(274), y0 - Dpi.S(2)), Size = Dpi.S(160, 34) }; Controls.Add(savePreset);
             delPreset = new FlatButton("Delete", false) { Location = new Point(m + Dpi.S(442), y0 - Dpi.S(2)), Size = Dpi.S(96, 34) }; Controls.Add(delPreset);
-            var presetHint = new Label { Text = "A preset sets the colours of the boxes, the numbers and the text, and the font, its size and its weight.", AutoSize = false, Location = new Point(m + Dpi.S(552), y0 - Dpi.S(8)), Size = new Size(Dpi.S(224), Dpi.S(54)), ForeColor = Theme.Slate, Font = Theme.Body(8.5f) }; Controls.Add(presetHint);
-            y0 += Dpi.S(56);
+            makeDefault = new FlatButton("Set as default", false) { Location = new Point(m + Dpi.S(548), y0 - Dpi.S(2)), Size = Dpi.S(204, 34) }; Controls.Add(makeDefault);
+            new ToolTip().SetToolTip(makeDefault, "Every new session recording starts with this preset");
+            var presetHint = new Label { Text = "A preset sets the colours, the font, its size and its weight. The default preset starts every new recording.", AutoSize = false, Location = new Point(m, y0 + Dpi.S(38)), Size = new Size(Dpi.S(800) - 2 * m, Dpi.S(20)), ForeColor = Theme.Slate, Font = Theme.Body(8.5f) }; Controls.Add(presetHint);
+            y0 += Dpi.S(70);
             int yL = y0, yR = y0;
 
             // ---- left: boxes and step numbers
@@ -93,7 +95,7 @@ namespace SnapLite
             textSize.SelectedIndexChanged += colours; weight.SelectedIndexChanged += colours; tstyle.SelectedIndexChanged += any; fillOpacity.SelectedIndexChanged += any; fillColor.ColorChanged += any;
             boxColor.ColorChanged += colours; stepColor.ColorChanged += colours; textColor.ColorChanged += colours;
             preset.SelectedIndexChanged += delegate { if (busy || preset.SelectedIndex <= 0) return; ApplyPreset(AllPresets()[preset.SelectedIndex - 1]); };
-            savePreset.Click += delegate { SavePreset(); }; delPreset.Click += delegate { DeletePreset(); };
+            savePreset.Click += delegate { SavePreset(); }; delPreset.Click += delegate { DeletePreset(); }; makeDefault.Click += delegate { ToggleDefault(); };
         }
 
         ThemedCombo Combo(int x, int y, int w)
@@ -103,7 +105,23 @@ namespace SnapLite
         static int NearestIndex(int[] a, int v) { int best = 0; for (int i = 0; i < a.Length; i++) if (Math.Abs(a[i] - v) < Math.Abs(a[best] - v)) best = i; return best; }
 
         // ---- presets
-        void FillPresets() { busy = true; preset.Items.Clear(); preset.Items.Add("Custom"); foreach (var p in AllPresets()) preset.Items.Add(p[0]); busy = false; }
+        static bool IsDefault(string name) { return Settings.DefaultLookPreset.Length > 0 && string.Equals(Settings.DefaultLookPreset, name, StringComparison.OrdinalIgnoreCase); }
+        void FillPresets() { busy = true; preset.Items.Clear(); preset.Items.Add("Custom"); foreach (var p in AllPresets()) preset.Items.Add(p[0] + (IsDefault(p[0]) ? "  (default)" : "")); busy = false; }
+        // the default preset's colours (and font, size and weight, when it has them) go onto a session that is just being recorded
+        internal static void ApplyDefaultPreset(SessionDoc d)
+        {
+            if (Settings.DefaultLookPreset.Length == 0) return;
+            var p = AllPresets().FirstOrDefault(x => IsDefault(x[0])); if (p == null) return;
+            d.BoxColor = Html(p[1]); d.StepColor = Html(p[2]); d.TextColor = Html(p[3]);
+            if (p.Length >= 7) { d.TextFont = p[4]; int px; if (int.TryParse(p[5], out px)) d.TextSize = px; if (Array.IndexOf(Weights, p[6]) >= 0) d.TextWeight = p[6]; }
+        }
+        // the button sets the shown preset as the default, or, when it already is the default, takes that away
+        void ToggleDefault()
+        {
+            int i = preset.SelectedIndex - 1; var all = AllPresets(); if (i < 0 || i >= all.Count) return;
+            Settings.DefaultLookPreset = IsDefault(all[i][0]) ? "" : all[i][0]; Settings.Save();
+            FillPresets(); SyncPreset();
+        }
         // the font part of the window as it is now: family, size, weight
         string[] FontNow() { return new[] { font.SelectedItem != null ? font.SelectedItem.ToString() : doc.TextFont, TextSizes[Math.Max(0, textSize.SelectedIndex)].ToString(), Weights[Math.Max(0, weight.SelectedIndex)] }; }
         // show the preset whose colours (and font, when it has one) are the ones set now, else "Custom"
@@ -118,6 +136,7 @@ namespace SnapLite
                 idx = i + 1; break;
             }
             preset.SelectedIndex = idx; delPreset.Enabled = idx > BuiltIn.Length; busy = false;
+            makeDefault.Enabled = idx > 0; makeDefault.Text = idx > 0 && IsDefault(all[idx - 1][0]) ? "Remove as default" : "Set as default";
         }
         void ApplyPreset(string[] p)
         {
@@ -158,6 +177,7 @@ namespace SnapLite
         {
             int i = preset.SelectedIndex - 1 - BuiltIn.Length; if (i < 0 || i >= Settings.ColorPresets.Count) return;
             if (MessageBox.Show(this, "Delete the preset \"" + Settings.ColorPresets[i][0] + "\"?", "Preset", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+            if (IsDefault(Settings.ColorPresets[i][0])) Settings.DefaultLookPreset = "";
             Settings.ColorPresets.RemoveAt(i); Settings.Save(); FillPresets(); SyncPreset();
         }
 

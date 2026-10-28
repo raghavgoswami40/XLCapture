@@ -40,6 +40,7 @@ namespace SnapLite
         public static bool SesTyping = true, SesScroll = true;
         public static string SesProcFile = "", SesProcCode = "", SesProcTitle = "", SlideTemplate = "", SlideExisting = "";     // the procedure a session follows (file, activity code, its title), and the slide template for the slide pack
         public static bool AskDelete = true;
+        public static string DefaultLookPreset = "";      // the appearance preset every new session recording starts with ("" = none)
         public static List<string[]> ColorPresets = new List<string[]>();      // the user's own presets: name, box, number, text (html colours), and (newer ones) the font, its size and its weight             // ask before deleting a capture (the "don't ask again" box turns it off)
 
         public static string DevFile;      // the test builds keep their settings here, never in the person's own file
@@ -65,6 +66,7 @@ namespace SnapLite
                         case "vidsel": VidSel = v; break; case "vidfmt": VidFormat = v; break; case "vidopen": VidOpenIn = v; break;
                         case "vidcursor": VidCursor = v == "1"; break; case "mic": MicOn = v == "1"; break; case "qtheme": QuickTheme = v; break;
                         case "askdelete": AskDelete = v != "0"; break;
+                        case "lookdefault": DefaultLookPreset = v; break;
                         case "cpreset": { var cp = v.Split('|'); if ((cp.Length == 4 || cp.Length == 7) && cp[0].Length > 0 && !ColorPresets.Any(x => x[0] == cp[0])) ColorPresets.Add(cp); } break;
                         case "vidhl": VidHighlight = v == "1"; break; case "vidclick": VidClick = v == "1"; break; case "vidcam": VidCamera = v == "1"; break; case "vidsys": VidSysAudio = v == "1"; break;
                         case "vidhlcolor": try { VidHighlightColor = ColorTranslator.FromHtml(v); } catch { } break; case "vidclickcolor": try { VidClickColor = ColorTranslator.FromHtml(v); } catch { } break;
@@ -90,7 +92,7 @@ namespace SnapLite
                 sb.AppendLine("vidcursor=" + (VidCursor ? 1 : 0)); sb.AppendLine("mic=" + (MicOn ? 1 : 0)); sb.AppendLine("qtheme=" + QuickTheme);
                 sb.AppendLine("sestarget=" + SesTarget); sb.AppendLine("sesopen=" + SesOpenIn); sb.AppendLine("sestyping=" + (SesTyping ? 1 : 0)); sb.AppendLine("sesscroll=" + (SesScroll ? 1 : 0));
                 sb.AppendLine("sesprocfile=" + SesProcFile); sb.AppendLine("sesproccode=" + SesProcCode); sb.AppendLine("sesproctitle=" + SesProcTitle); sb.AppendLine("slidetemplate=" + SlideTemplate); sb.AppendLine("slideexisting=" + SlideExisting);
-                sb.AppendLine("askdelete=" + (AskDelete ? 1 : 0));
+                sb.AppendLine("askdelete=" + (AskDelete ? 1 : 0)); sb.AppendLine("lookdefault=" + DefaultLookPreset);
                 foreach (var cp in ColorPresets) sb.AppendLine("cpreset=" + string.Join("|", cp));
                 sb.AppendLine("vidhl=" + (VidHighlight ? 1 : 0)); sb.AppendLine("vidclick=" + (VidClick ? 1 : 0)); sb.AppendLine("vidcam=" + (VidCamera ? 1 : 0)); sb.AppendLine("vidsys=" + (VidSysAudio ? 1 : 0));
                 sb.AppendLine("vidhlcolor=" + ColorTranslator.ToHtml(VidHighlightColor)); sb.AppendLine("vidclickcolor=" + ColorTranslator.ToHtml(VidClickColor));

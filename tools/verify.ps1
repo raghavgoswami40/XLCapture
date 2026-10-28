@@ -41,6 +41,7 @@ try {
   Run "canvas picks up an existing shape" @('--pick-test', "`"$Work\pick.log`"") "$Work\pick.log" 60 "ALL PASSED"
   Run "editor opens without an exception" @('--open-editor', "`"$Work\open-editor.log`"") "$Work\open-editor.log" 60 "done"
   if ($sess -and (Test-Path $sess)) {
+    Run "Share and Copy work for a session; Crop follows Appearance" @('--session-ribbon-test', "`"$Work\ribbon.log`"", "`"$sess`"", "`"$data`"") "$Work\ribbon.log" 90 "ALL PASSED"
     Run "session editor photographed (box corner dot, step menu)" @('--round-shot', "`"$shots\round`"", "`"$sess`"", "`"$data`"") "" 90
     Run "shared session round trip, moved text" @('--share-test', "`"$Work\share.log`"", "`"$sess`"", "`"$Work\share`"") "$Work\share.log" 120 "ALL PASSED"
     $ventia = Join-Path $env:USERPROFILE "Downloads\Ventia - 1.4.1 Create Delivery Project - V0.0 - 202610231528.xlsx"

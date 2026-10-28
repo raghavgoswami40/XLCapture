@@ -34,7 +34,7 @@ namespace SnapLite
 
         // chrome
         readonly MenuStrip menu; readonly SoftToolStrip ribbon; readonly ToolStripLabel spacer;
-        ToolStripButton modeEditor, modeLibrary; ToolStripDropDownButton moreBtn, favBtn, shareBtn;
+        ToolStripButton modeEditor, modeLibrary, copyAllBtn, undoBtn, redoBtn; ToolStripDropDownButton moreBtn, favBtn, shareBtn; ToolStripItem[] shareImageItems;
         readonly Dictionary<Tool, ToolStripButton> toolBtns = new Dictionary<Tool, ToolStripButton>();
         readonly Panel center, empty; readonly Scroller scroller; LibraryView library;
         readonly Panel right; readonly FlowLayoutPanel rightFlow;
@@ -241,14 +241,17 @@ namespace SnapLite
             moreBtn.DropDownItems.Add(new ToolStripSeparator());
             moreBtn.DropDownItems.Add(M("Grab text (OCR)", delegate { GrabText(); }));
             r.Items.Add(moreBtn);
-            r.Items.Add(RB(Ic.Undo, "Undo", "Undo (Ctrl+Z)", delegate { if (cur != null) { Doc.Undo(); canvas.Sel.Clear(); OnSelectionChanged(); } }));
-            r.Items.Add(RB(Ic.Redo, "Redo", "Redo (Ctrl+Y)", delegate { if (cur != null) { Doc.Redo(); canvas.Sel.Clear(); OnSelectionChanged(); } }));
+            undoBtn = RB(Ic.Undo, "Undo", "Undo (Ctrl+Z)", delegate { if (sessionMode) { if (sessionView != null) sessionView.UndoChange(); } else if (cur != null) { Doc.Undo(); canvas.Sel.Clear(); OnSelectionChanged(); } });
+            redoBtn = RB(Ic.Redo, "Redo", "Redo (Ctrl+Y)", delegate { if (sessionMode) { if (sessionView != null) sessionView.RedoChange(); } else if (cur != null) { Doc.Redo(); canvas.Sel.Clear(); OnSelectionChanged(); } });
+            r.Items.Add(undoBtn); r.Items.Add(redoBtn);
 
             shareBtn = new ToolStripDropDownButton("Share", Icons.Get(Ic.Share, Dpi.S(20), Color.White)) { Alignment = ToolStripItemAlignment.Right, Tag = "primary", Padding = Dpi.P(12, 6, 12, 6), Margin = Dpi.P(4, 14, 4, 14), Font = Theme.BodyBold(10f), TextImageRelation = TextImageRelation.ImageBeforeText, DisplayStyle = ToolStripItemDisplayStyle.ImageAndText, AccessibleName = "Share" };
             shareBtn.DropDown.Renderer = new ThemeRenderer(); shareBtn.DropDown.Font = Theme.Body(9.5f);
             var src = BuildShareMenu(); shareBtn.DropDownItems.AddRange(src.DropDownItems.Cast<ToolStripItem>().ToArray());
-            var copyAll = new ToolStripButton("Copy All", Icons.Get(Ic.Copy, Dpi.S(20), Theme.Ink)) { Alignment = ToolStripItemAlignment.Right, TextImageRelation = TextImageRelation.ImageBeforeText, DisplayStyle = ToolStripItemDisplayStyle.ImageAndText, Padding = Dpi.P(8, 6, 8, 6), Margin = Dpi.P(4, 14, 4, 14), Font = Theme.Body(10f), ToolTipText = "Copy the whole picture with its annotations (Ctrl+Shift+C)" };
-            copyAll.Click += delegate { if (cur != null) CopyImage(); };
+            shareImageItems = shareBtn.DropDownItems.Cast<ToolStripItem>().ToArray();
+            var copyAll = new ToolStripButton("Copy", Icons.Get(Ic.Copy, Dpi.S(20), Theme.Ink)) { Alignment = ToolStripItemAlignment.Right, TextImageRelation = TextImageRelation.ImageBeforeText, DisplayStyle = ToolStripItemDisplayStyle.ImageAndText, Padding = Dpi.P(8, 6, 8, 6), Margin = Dpi.P(4, 14, 4, 14), Font = Theme.Body(10f), ToolTipText = "Copy the whole picture with its annotations (Ctrl+Shift+C)" };
+            copyAllBtn = copyAll;
+            copyAll.Click += delegate { if (sessionMode) { if (sessionView != null) sessionView.CopyCurrentScreen(); } else if (cur != null) CopyImage(); };
             r.Items.Add(shareBtn); r.Items.Add(copyAll);
 
             bool laying = false;
@@ -330,9 +333,9 @@ namespace SnapLite
                 M("Close this picture", "Ctrl+W", delegate { CloseCurrent(); }), MI("Exit editor", null, delegate { Close(); })));
             var arrange = BuildArrangeMenu(); arrange.Text = "Arrange";
             ms.Items.Add(DD(Ic.Undo, "&Edit", "",
-                M("Undo", "Ctrl+Z", delegate { Doc.Undo(); canvas.Sel.Clear(); OnSelectionChanged(); }), M("Redo", "Ctrl+Y", delegate { Doc.Redo(); canvas.Sel.Clear(); OnSelectionChanged(); }), new ToolStripSeparator(),
+                M("Undo", "Ctrl+Z", delegate { if (sessionMode) { if (sessionView != null) sessionView.UndoChange(); } else if (Doc != null) { Doc.Undo(); canvas.Sel.Clear(); OnSelectionChanged(); } }), M("Redo", "Ctrl+Y", delegate { if (sessionMode) { if (sessionView != null) sessionView.RedoChange(); } else if (Doc != null) { Doc.Redo(); canvas.Sel.Clear(); OnSelectionChanged(); } }), new ToolStripSeparator(),
                 M("Cut", "Ctrl+X", delegate { CutSel(); }), M("Copy", "Ctrl+C", delegate { CopySel(); }), M("Paste", "Ctrl+V", delegate { canvas.Paste(); }),
-                M("Copy All", "Ctrl+Shift+C", delegate { CopyImage(); }), new ToolStripSeparator(), arrange));
+                M("Copy whole picture", "Ctrl+Shift+C", delegate { if (sessionMode && sessionView != null) sessionView.CopyCurrentScreen(); else CopyImage(); }), new ToolStripSeparator(), arrange));
             var img = BuildImageMenu(); img.Text = "&Image";
             img.DropDownItems.Add(new ToolStripSeparator());
             var filt = BuildFilterMenu(); filt.Text = "Filters"; img.DropDownItems.Add(filt);
@@ -354,7 +357,7 @@ namespace SnapLite
         // ------------------------------------------------------------ modes, panels, tray
         void SetMode(bool lib)
         {
-            if (sessionMode) { if (!LeaveSession()) return; sessionMode = false; if (sessionView != null) sessionView.Visible = false; }
+            if (sessionMode) { if (!LeaveSession()) return; sessionMode = false; if (sessionView != null) sessionView.Visible = false; SwapShareItems(false); }
             libraryMode = lib;
             modeEditor.Checked = !lib; modeLibrary.Checked = lib;
             if (lib && library == null)
@@ -401,6 +404,7 @@ namespace SnapLite
             {
                 sessionView = new SessionView { Dock = DockStyle.Fill, Visible = false };
                 sessionView.Message += Info;
+                sessionView.HistoryChanged += delegate { SyncHistoryButtons(); };
                 sessionView.OpenInEditor += delegate(Doc doc) { SetSessionMode(false); OpenDoc(doc); };
                 sessionView.Saved += delegate { RefreshTray(); Text = sessionView.Doc.Name + " - XLCapture Editor"; UpdateSessionLabel(); };
                 sessionView.NameEdited += delegate { UpdateSessionLabel(); };
@@ -411,6 +415,16 @@ namespace SnapLite
             SetSessionMode(true);
             tray.CurrentDoc = null; tray.CurrentPath = path; tray.Invalidate(); tray.ScrollToCurrent();
         }
+        // the Share button offers the picture's choices (file, email, FTP, print, folder) or, while a session is open, the session's (share session, pictures, PDF, guide folder, slide pack)
+        bool sharingSession;
+        void SwapShareItems(bool session)
+        {
+            if (session == sharingSession || shareBtn == null) return;
+            var from = session ? shareImageItems : sessionView.ShareItems; var to = session ? sessionView.ShareItems : shareImageItems;
+            foreach (var it in from) shareBtn.DropDownItems.Remove(it);
+            shareBtn.DropDownItems.AddRange(to); sharingSession = session;
+        }
+        void SyncHistoryButtons() { if (sessionMode && sessionView != null) { undoBtn.Enabled = sessionView.CanUndo; redoBtn.Enabled = sessionView.CanRedo; } }
         void SetSessionMode(bool on)
         {
             sessionMode = on;
@@ -419,6 +433,9 @@ namespace SnapLite
             if (sessionView != null) { sessionView.Visible = on; if (on) sessionView.BringToFront(); }
             scroller.Visible = !on && !libraryMode && cur != null; empty.Visible = !on && !libraryMode && cur == null;
             foreach (ToolStripItem it in ribbon.Items) if (it != modeEditor && it != modeLibrary && !(it.Text == "Capture") && !(it.Text == "Create") && !(it is ToolStripSeparator) && it != spacer) it.Enabled = !on && !libraryMode;
+            if (on) SyncHistoryButtons();      // Undo and Redo follow the session's own history while it is open
+            shareBtn.Enabled = copyAllBtn.Enabled = !libraryMode;       // a session is shared and copied from the same two buttons as a picture
+            SwapShareItems(on);
             ApplyRight(); ApplyTray();
             Text = on ? sessionView.Doc.Name + " - XLCapture Editor" : TitleText();
             UpdateSessionLabel();

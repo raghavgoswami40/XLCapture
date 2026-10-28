@@ -24,7 +24,8 @@ namespace SnapLite
         readonly TextBox name; readonly Label meta; readonly ListBox list; readonly Panel preview; readonly Label screenLabel;
         readonly ToolTip tips = new ToolTip(); Label zoomLabel; readonly Panel tools; TextBox inline; SessionStep inlineFor; readonly ComboBox pictureBox; readonly Label pictureLabel;
         readonly ToolStripMenuItem bDup, bMerge, bSplit, bCrop, bWhole, bPaste, bOriginal, bDelScreen, bPics, bPdf;
-        readonly FlatButton bUndo, bApply, bCancelCrop; readonly FlatButton[] menuButtons;
+        readonly FlatButton bUndo, bApply, bCancelCrop, cropBtn; readonly FlatButton[] menuButtons;
+        public ToolStripItem[] ShareItems { get; private set; }        // what the editor's Share button offers while a session is open
         List<List<SessionStep>> groups = new List<List<SessionStep>>();
         int screen; SessionStep current; bool loading;
         Bitmap baseBmp; byte[] baseRef;                        // the screen's picture as it is, decoded once
@@ -35,17 +36,34 @@ namespace SnapLite
         class StepState { public SessionStep S; public bool Break, Typed, BoxEdited, TextEdited; public byte[] Frame, Custom; public string From, Text, Param; public Rectangle Crop, Box; public PointF? Badge, TextPos; public int X, Y; public float Round; }
         readonly List<List<StepState>> undoStack = new List<List<StepState>>();
         List<StepState> Snapshot() { return Doc.Steps.Select(s => new StepState { S = s, Break = s.BreakBefore, Typed = s.Typed, BoxEdited = s.BoxEdited, TextEdited = s.StepTextEdited, Frame = s.Frame, Custom = s.CustomFrame, From = s.FrameFrom, Text = s.StepText, Param = s.Param, Crop = s.Crop, Box = s.Box, Badge = s.BadgePos, TextPos = s.TextPos, X = s.X, Y = s.Y, Round = s.Round }).ToList(); }
-        void Push(List<StepState> snap) { undoStack.Add(snap); if (undoStack.Count > 40) undoStack.RemoveAt(0); bUndo.Enabled = true; }
+        readonly List<List<StepState>> redoStack = new List<List<StepState>>();
+        public event EventHandler HistoryChanged;
+        public bool CanUndo { get { return undoStack.Count > 0; } }
+        public bool CanRedo { get { return redoStack.Count > 0; } }
+        public void UndoChange() { Undo(); }
+        public void RedoChange() { Redo(); }
+        void HistoryMoved() { nudged = null; bUndo.Enabled = undoStack.Count > 0; if (HistoryChanged != null) HistoryChanged(this, EventArgs.Empty); }
+        void Push(List<StepState> snap) { undoStack.Add(snap); if (undoStack.Count > 40) undoStack.RemoveAt(0); redoStack.Clear(); HistoryMoved(); }
         void Push() { Push(Snapshot()); }
         void Undo()
         {
             if (undoStack.Count == 0) { Say("There is nothing to undo."); return; }
-            var snap = undoStack[undoStack.Count - 1]; undoStack.RemoveAt(undoStack.Count - 1);
+            var snap = undoStack[undoStack.Count - 1]; undoStack.RemoveAt(undoStack.Count - 1); redoStack.Add(Snapshot());
+            Restore(snap);
+        }
+        void Redo()
+        {
+            if (redoStack.Count == 0) { Say("There is nothing to redo."); return; }
+            var snap = redoStack[redoStack.Count - 1]; redoStack.RemoveAt(redoStack.Count - 1); undoStack.Add(Snapshot());
+            Restore(snap);
+        }
+        void Restore(List<StepState> snap)
+        {
             Doc.Steps.Clear();
             foreach (var t in snap) { var s = t.S; s.BreakBefore = t.Break; s.Typed = t.Typed; s.BoxEdited = t.BoxEdited; s.StepTextEdited = t.TextEdited; s.Frame = t.Frame; s.CustomFrame = t.Custom; s.FrameFrom = t.From; s.StepText = t.Text; s.Param = t.Param; s.Crop = t.Crop; s.Box = t.Box; s.BadgePos = t.Badge; s.TextPos = t.TextPos; s.X = t.X; s.Y = t.Y; s.Round = t.Round; Doc.Steps.Add(s); }
             Doc.Renumber(); Doc.Dirty = true; cropMode = false; var keep = current; current = null; Rebuild(Math.Min(screen, Math.Max(0, Doc.Groups().Count - 1)));
             if (keep != null && Doc.Steps.Contains(keep)) SelectStep(keep);
-            bUndo.Enabled = undoStack.Count > 0;
+            HistoryMoved();
         }
 
         public SessionView()
@@ -119,7 +137,7 @@ namespace SnapLite
             mk(barR, "Continue recording", Ic.Record, "Save this session, then carry on recording: the new steps are added after the last one", delegate { if (Save() && ContinueRequested != null) ContinueRequested(this, EventArgs.Empty); }, false, 32);
             mk(barR, "Save", Ic.Save, "Save the session (Ctrl+S)", delegate { Save(); }, true, 32).Margin = new Padding(0);
 
-            // the screen tools, under it: the screen and its look on the left; undo, crop and export on the right
+            // the screen tools, under it: the screen, its look and Crop on the left; undo on the right (what used to be Export is the editor's Share button)
             tools = new Panel { Dock = DockStyle.Top, Height = Dpi.S(54), BackColor = Theme.Sheet };
             tools.Paint += delegate(object s, PaintEventArgs e) { using (var p = new Pen(Theme.Rule)) e.Graphics.DrawLine(p, 0, tools.Height - 1, tools.Width, tools.Height - 1); };
             var toolsL = half(Dpi.P(12, 8, 0, 0)); toolsL.Dock = DockStyle.Left;
@@ -144,12 +162,14 @@ namespace SnapLite
             bPdf = MenuItem(exportMenu, "PDF guide...", "One page per screen with its numbered steps", ExportPdf);
             MenuItem(exportMenu, "Guide folder...", "Export clicks.json + screenshots for the click-guide-builder skill (makes a PowerPoint guide)", ExportGuide);
             MenuItem(exportMenu, "Slide pack for Claude...", "One slide per screenshot, grouped by task: a folder Claude turns into the slide pack PowerPoint", ExportSlidePack);
-            menuButtons = new[] { MenuButton("Screen", "Merge, crop, replace or delete this screen's screenshot", screenMenu, 34, 6), AppearanceButton(), MenuButton("Export", "Save the session as pictures, a PDF or a guide folder", exportMenu, 34, 6) };
-            toolsL.Controls.Add(menuButtons[0]); toolsL.Controls.Add(menuButtons[1]); menuButtons[2].Margin = new Padding(0);
+            ShareItems = exportMenu.Items.Cast<ToolStripItem>().ToArray();       // shown by the Share button in the editor's ribbon, not by a button here
+            var screenBtn = MenuButton("Screen", "Merge, crop, replace or delete this screen's screenshot", screenMenu, 34, 6); var appearBtn = AppearanceButton();
+            toolsL.Controls.Add(screenBtn); toolsL.Controls.Add(appearBtn);
+            cropBtn = mk(toolsL, "Crop", Ic.Crop, "Show only part of the screenshot (then Enter keeps it, Esc leaves it)", StartCrop, false, 34);
+            menuButtons = new[] { screenBtn, appearBtn, cropBtn };
             bApply = mk(toolsR, "Apply crop", Ic.Check, "Keep the selected part (Enter)", ApplyCrop, true, 34); bCancelCrop = mk(toolsR, "Cancel", null, "Leave the crop as it was (Esc)", CancelCrop, false, 34);
             bApply.Visible = false; bCancelCrop.Visible = false;
             bUndo = mk(toolsR, "", Ic.Undo, "Undo the last change (Ctrl+Z)", Undo, false, 34); bUndo.Enabled = false;
-            toolsR.Controls.Add(menuButtons[2]);
             pictureLabel = new Label { Text = "Screenshot:", AutoSize = true, Margin = new Padding(8, Dpi.S(6), 4, 0), ForeColor = Theme.Slate, Visible = false };
             pictureBox = new ThemedCombo { Width = Dpi.S(210), Margin = new Padding(0, Dpi.S(2), 0, 0), Visible = false, AccessibleName = "Which screenshot to use" };
             pictureBox.SelectedIndexChanged += delegate
@@ -164,7 +184,7 @@ namespace SnapLite
             preview = new ZoomPanel { Dock = DockStyle.Fill, BackColor = Theme.Paper, AllowDrop = true }; preview.MouseWheel += PreviewWheel;
             typeof(Panel).GetProperty("DoubleBuffered", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).SetValue(preview, true, null);
             preview.Paint += PaintPreview; preview.Resize += delegate { ClampPan(); UpdateZoomLabel(); preview.Invalidate(); };
-            preview.MouseDown += PreviewDown; preview.MouseMove += PreviewMove; preview.MouseUp += PreviewUp;
+            preview.MouseDown += PreviewDown; preview.MouseMove += PreviewMove; preview.MouseUp += PreviewUp; preview.MouseLeave += delegate { if (drag == Drag.None) SetHover(null); };
             preview.DragEnter += delegate(object s, DragEventArgs e) { if (e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetDataPresent(DataFormats.Bitmap)) e.Effect = DragDropEffects.Copy; };
             preview.DragDrop += PreviewDrop;
             var right = new Panel { Dock = DockStyle.Fill };
@@ -174,7 +194,7 @@ namespace SnapLite
 
         public void Load(SessionDoc d)
         {
-            Doc = d; loading = true; name.Text = d.Name; loading = false; undoStack.Clear(); bUndo.Enabled = false;
+            Doc = d; loading = true; name.Text = d.Name; loading = false; undoStack.Clear(); redoStack.Clear(); HistoryMoved();
             Rebuild(0); if (groups.Count > 0) SelectGroupRow(0);
         }
         void Rebuild(int keepScreen)
@@ -232,7 +252,7 @@ namespace SnapLite
             bUndo.Visible = !cropMode; bApply.Visible = cropMode; bCancelCrop.Visible = cropMode;
             if (!has) return;
             bMerge.Enabled = screen > 0; bSplit.Enabled = current != null && groups[screen][0] != current;
-            bCrop.Enabled = baseBmp != null; bWhole.Visible = cropMode || !first.Crop.IsEmpty; bOriginal.Visible = !cropMode && first.CustomFrame != null; bUndo.Enabled = undoStack.Count > 0;
+            bCrop.Enabled = cropBtn.Enabled = baseBmp != null; bWhole.Visible = cropMode || !first.Crop.IsEmpty; bOriginal.Visible = !cropMode && first.CustomFrame != null; bUndo.Enabled = undoStack.Count > 0;
             var pics = SessionDoc.Pictures(groups[screen]); bool choose = !cropMode && pics.Count > 1 && first.CustomFrame == null;
             pictureLabel.Visible = choose; pictureBox.Visible = choose;
             if (choose)
@@ -291,9 +311,10 @@ namespace SnapLite
             g.TranslateTransform(r.X - v.X * k, r.Y - v.Y * k); g.ScaleTransform(k, k);
             Doc.DrawMarks(g, groups[screen], current, baseBmp.Width, true, v, 1);
             g.ResetClip(); Doc.DrawMarks(g, groups[screen], current, baseBmp.Width, true, v, 2);          // text outside the screenshot: plain, on the pasteboard
-            if (Doc.ShowBoxes && current != null && groups[screen].Contains(current) && current.Kind != "scroll")      // the corner to drag to resize the selected box
+            var hv = CornersShownFor();      // the four corners to drag to resize a box show only while the pointer is over it, and not while its roundness is being set
+            if (hv != null) for (int c = 0; c < 4; c++) { var hr = CornerHandle(hv, c); g.FillRectangle(Brushes.White, hr); using (var p = new Pen(Doc.BoxColor, 2f * baseBmp.Width / 1600f)) g.DrawRectangle(p, hr.X, hr.Y, hr.Width, hr.Height); }
+            if (Doc.ShowBoxes && current != null && groups[screen].Contains(current) && current.Kind != "scroll")
             {
-                var hr = HandleRect(current); g.FillRectangle(Brushes.White, hr); using (var p = new Pen(Doc.BoxColor, 2f * baseBmp.Width / 1600f)) g.DrawRectangle(p, hr.X, hr.Y, hr.Width, hr.Height);
                 if (Doc.BoxShape == "rounded")       // the round dot on the top edge: drag it sideways to change how round this box's corners are
                 {
                     var rh = RoundHandle(current); g.FillEllipse(Brushes.White, rh); using (var p = new Pen(Doc.BoxColor, 2f * baseBmp.Width / 1600f)) g.DrawEllipse(p, rh);
@@ -302,13 +323,46 @@ namespace SnapLite
             g.Restore(st);
         }
         // the dot that sets a rounded box's corner radius: on the top edge, that far in from the top-right corner
-        RectangleF RoundHandle(SessionStep s) { float h = 10f * Math.Max(1f, baseBmp.Width / 1600f); return new RectangleF(s.Box.Right - SessionDoc.CornerRadius(s) - h / 2, s.Box.Y - h / 2, h, h); }
+        RectangleF RoundHandle(SessionStep s) { float h = 10f * Math.Max(1f, baseBmp.Width / 1600f); return new RectangleF(s.Box.Right - Math.Max(SessionDoc.CornerRadius(s), 1.6f * h) - h / 2, s.Box.Y - h / 2, h, h); }      // never closer to the corner than its resize handle
         bool OnRoundHandle(SessionStep s, PointF pt)
         {
             if (!Doc.ShowBoxes || Doc.BoxShape != "rounded" || s == null || s.Kind == "scroll") return false;
             var rh = RoundHandle(s); float cx = rh.X + rh.Width / 2, cy = rh.Y + rh.Height / 2; return Math.Sqrt((pt.X - cx) * (pt.X - cx) + (pt.Y - cy) * (pt.Y - cy)) <= rh.Width * 0.9f;
         }
-        RectangleF HandleRect(SessionStep s) { float h = 10f * Math.Max(1f, baseBmp.Width / 1600f); return new RectangleF(s.Box.Right - h / 2, s.Box.Bottom - h / 2, h, h); }
+        // the four corner handles that resize the selected box: 0 top left, 1 top right, 2 bottom left, 3 bottom right
+        RectangleF CornerHandle(SessionStep s, int c)
+        {
+            float h = 10f * Math.Max(1f, baseBmp.Width / 1600f); var b = s.Box; float x = c % 2 == 0 ? b.X : b.Right, y = c < 2 ? b.Y : b.Bottom;
+            return new RectangleF(x - h / 2, y - h / 2, h, h);
+        }
+        int CornerAt(SessionStep s, PointF pt)
+        {
+            if (s == null || s.Kind == "scroll" || !Doc.ShowBoxes) return -1;
+            PointF bc = Doc.ShowNumbers ? SessionDoc.BadgeCenter(s, baseBmp.Width, Doc.StepSize) : PointF.Empty; float br = SessionDoc.BadgeRadius(baseBmp.Width, Doc.StepSize);
+            for (int c = 3; c >= 0; c--)
+            {
+                var hr = CornerHandle(s, c); var r = hr; r.Inflate(r.Width * 0.3f, r.Height * 0.3f); if (!r.Contains(pt)) continue;
+                // the number sits over the top left corner: where the pointer is nearer the number's centre than the handle's, it is the number that is taken
+                if (Doc.ShowNumbers) { float dn = Dist(pt, bc), dh = Dist(pt, new PointF(hr.X + hr.Width / 2, hr.Y + hr.Height / 2)); if (dn <= br && dn <= dh) continue; }
+                return c;
+            }
+            return -1;
+        }
+        // the box the pointer is over (the selected one first), or null
+        SessionStep ShapeUnder(PointF pt)
+        {
+            if (baseBmp == null || groups.Count == 0 || !Doc.ShowBoxes) return null;
+            var g = groups[screen]; float pad = 10f * Math.Max(1f, baseBmp.Width / 1600f);
+            Func<SessionStep, bool> over = delegate(SessionStep s) { if (s.Kind == "scroll") return false; var b = s.Box; return new RectangleF(b.X - pad, b.Y - pad, b.Width + 2 * pad, b.Height + 2 * pad).Contains(pt); };
+            if (current != null && g.Contains(current) && over(current)) return current;
+            for (int i = g.Count - 1; i >= 0; i--) if (over(g[i])) return g[i];
+            return null;
+        }
+        SessionStep hoverStep;
+        SessionStep CornersShownFor() { return drag == Drag.Round || drag == Drag.Badge || drag == Drag.Text || hoverStep == null || !Doc.ShowBoxes || baseBmp == null || groups.Count == 0 || !groups[screen].Contains(hoverStep) ? null : hoverStep; }
+        void SetHover(SessionStep s) { if (hoverStep == s) return; hoverStep = s; preview.Invalidate(); }
+        static float Dist(PointF a, PointF b) { return (float)Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y)); }
+        int resizeCorner;
 
         // ------------------------------------------------------------ dragging boxes and numbers
         enum Drag { None, MoveBox, Resize, Round, Badge, Text, CropMove, CropSize, CropNew }
@@ -324,14 +378,14 @@ namespace SnapLite
             if (cropMode) { StartCropDrag(pt); return; }
             var g = groups[screen]; float br = SessionDoc.BadgeRadius(baseBmp.Width, Doc.StepSize);
             SessionStep hit = null; Drag mode = Drag.None;
-            if (current != null && g.Contains(current) && current.Kind != "scroll" && HandleRect(current).Contains(pt)) { hit = current; mode = Drag.Resize; }
+            var under = ShapeUnder(pt); if (under != null) { int c = CornerAt(under, pt); if (c >= 0) { hit = under; mode = Drag.Resize; resizeCorner = c; } }
             if (hit == null && current != null && g.Contains(current) && OnRoundHandle(current, pt)) { hit = current; mode = Drag.Round; }
             if (hit == null && Doc.ShowText) for (int i = g.Count - 1; i >= 0; i--) { var tb = Doc.TextBox(g[i], baseBmp.Width, baseBmp.Height); if (tb.HasValue && tb.Value.Contains(pt)) { hit = g[i]; mode = Drag.Text; textOrigin = tb.Value.Location; break; } }
             if (hit == null && Doc.ShowNumbers) for (int i = g.Count - 1; i >= 0; i--) { var c = SessionDoc.BadgeCenter(g[i], baseBmp.Width, Doc.StepSize); if (Math.Sqrt((pt.X - c.X) * (pt.X - c.X) + (pt.Y - c.Y) * (pt.Y - c.Y)) <= br) { hit = g[i]; mode = Drag.Badge; break; } }
             if (hit == null) for (int i = g.Count - 1; i >= 0; i--) { var b = g[i].Box; var rr = new RectangleF(b.X - 4, b.Y - 4, b.Width + 8, b.Height + 8); if (rr.Contains(pt)) { hit = g[i]; mode = Drag.MoveBox; break; } }
             if (hit == null) { if (zoomK > 1.001f) { panning = true; panFrom = e.Location; panStart0 = pan; preview.Cursor = Cursors.SizeAll; } return; }
             if (hit != current) { current = hit; SelectStep(hit); }
-            drag = mode; roundStart = hit.Round; boxStart = hit.Box; badgeStart = hit.BadgePos; textStart = hit.TextPos; startX = hit.X; startY = hit.Y; pending = Snapshot();
+            hoverStep = hit; drag = mode; roundStart = hit.Round; boxStart = hit.Box; badgeStart = hit.BadgePos; textStart = hit.TextPos; startX = hit.X; startY = hit.Y; pending = Snapshot();
             if (mode == Drag.Badge && !hit.BadgePos.HasValue) badgeStart = SessionDoc.BadgeCenter(hit, baseBmp.Width, Doc.StepSize);
         }
         void PreviewMove(object s, MouseEventArgs e)
@@ -342,7 +396,8 @@ namespace SnapLite
             if (drag == Drag.None)
             {
                 Cursor = Cursors.Default; if (cropMode) { Cursor = CropCursor(pt); return; }
-                var g = groups[screen]; if (current != null && g.Contains(current) && current.Kind != "scroll" && HandleRect(current).Contains(pt)) Cursor = Cursors.SizeNWSE;
+                var g = groups[screen]; var under = ShapeUnder(pt); SetHover(under); int hc = under != null ? CornerAt(under, pt) : -1;
+                if (hc >= 0) Cursor = hc == 0 || hc == 3 ? Cursors.SizeNWSE : Cursors.SizeNESW;
                 else if (current != null && g.Contains(current) && OnRoundHandle(current, pt)) Cursor = Cursors.SizeWE;
                 else foreach (var st in g) if (st.Box.Contains((int)pt.X, (int)pt.Y)) { Cursor = Cursors.SizeAll; break; }
                 if (Doc.ShowText) foreach (var st in g) { var tb = Doc.TextBox(st, baseBmp.Width, baseBmp.Height); if (tb.HasValue && tb.Value.Contains(pt)) { Cursor = Cursors.SizeAll; break; } }
@@ -364,7 +419,13 @@ namespace SnapLite
                 if (badgeStart.HasValue) cur.BadgePos = new PointF(badgeStart.Value.X + (nx - boxStart.X), badgeStart.Value.Y + (ny - boxStart.Y));    // the number travels with its box
                 if (textStart.HasValue) cur.TextPos = new PointF(textStart.Value.X + (nx - boxStart.X), textStart.Value.Y + (ny - boxStart.Y));          // and so does a text that was moved
             }
-            else if (drag == Drag.Resize) cur.Box = new Rectangle(boxStart.X, boxStart.Y, (int)Math.Max(8, Math.Min(baseBmp.Width - boxStart.X, boxStart.Width + dx)), (int)Math.Max(8, Math.Min(baseBmp.Height - boxStart.Y, boxStart.Height + dy)));
+            else if (drag == Drag.Resize)
+            {   // the corner being dragged moves; the opposite corner stays where it was
+                int l = boxStart.X, t = boxStart.Y, r = boxStart.Right, b = boxStart.Bottom;
+                if (resizeCorner % 2 == 0) l = (int)Math.Round(Math.Max(0, Math.Min(r - 8, boxStart.X + dx))); else r = (int)Math.Round(Math.Max(l + 8, Math.Min(baseBmp.Width, boxStart.Right + dx)));
+                if (resizeCorner < 2) t = (int)Math.Round(Math.Max(0, Math.Min(b - 8, boxStart.Y + dy))); else b = (int)Math.Round(Math.Max(t + 8, Math.Min(baseBmp.Height, boxStart.Bottom + dy)));
+                cur.Box = Rectangle.FromLTRB(l, t, r, b);
+            }
             else if (drag == Drag.Text) cur.TextPos = new PointF(textOrigin.X + dx, textOrigin.Y + dy);
             else if (drag == Drag.Badge) cur.BadgePos = new PointF(Math.Max(0, Math.Min(baseBmp.Width, badgeStart.Value.X + dx)), Math.Max(0, Math.Min(baseBmp.Height, badgeStart.Value.Y + dy)));
             cur.BoxEdited = true; preview.Invalidate();
@@ -455,6 +516,8 @@ namespace SnapLite
         }
 
         // ------------------------------------------------------------ screens and steps
+        // the editor's Copy button: this screen, with its boxes, numbers and text, on the clipboard
+        public void CopyCurrentScreen() { CopyScreenshot(); }
         void MergeWithPrevious()
         {
             if (groups.Count == 0) return;
@@ -716,11 +779,31 @@ namespace SnapLite
         }
         void Say(string m) { if (Message != null) Message(m); }
 
+        DateTime nudgeAt; SessionStep nudged;
+        bool NudgeStep(Keys keyData)
+        {
+            int step = (keyData & Keys.Shift) != 0 ? 10 : 1, dx = 0, dy = 0;
+            switch (keyData & ~Keys.Shift) { case Keys.Left: dx = -step; break; case Keys.Right: dx = step; break; case Keys.Up: dy = -step; break; case Keys.Down: dy = step; break; default: return false; }
+            var s = Selected; if (s == null || !groups[screen].Contains(s)) return false;
+            var b = s.Box; int nx = Math.Max(0, Math.Min(baseBmp.Width - b.Width, b.X + dx)), ny = Math.Max(0, Math.Min(baseBmp.Height - b.Height, b.Y + dy));
+            int mx = nx - b.X, my = ny - b.Y; if (mx == 0 && my == 0) return true;
+            // a run of key presses is one change to undo
+            if (nudged != s || (DateTime.UtcNow - nudgeAt).TotalMilliseconds > 900) Push();
+            nudged = s; nudgeAt = DateTime.UtcNow;
+            s.Box = new Rectangle(nx, ny, b.Width, b.Height);
+            if (s.Kind == "scroll") { s.X += mx; s.Y += my; }
+            if (s.BadgePos.HasValue) s.BadgePos = new PointF(s.BadgePos.Value.X + mx, s.BadgePos.Value.Y + my);
+            if (s.TextPos.HasValue) s.TextPos = new PointF(s.TextPos.Value.X + mx, s.TextPos.Value.Y + my);
+            s.BoxEdited = true; Doc.Dirty = true; preview.Invalidate(); list.Invalidate(); return true;
+        }
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (cropMode && keyData == Keys.Enter) { ApplyCrop(); return true; }
             if (cropMode && keyData == Keys.Escape) { CancelCrop(); return true; }
             if (keyData == (Keys.Control | Keys.Z) && !(ActiveControl is TextBox)) { Undo(); return true; }
+            if ((keyData == (Keys.Control | Keys.Y) || keyData == (Keys.Control | Keys.Shift | Keys.Z)) && !(ActiveControl is TextBox)) { Redo(); return true; }
+            if (!cropMode && Doc != null && ActiveControl == preview && Selected != null && baseBmp != null && NudgeStep(keyData)) return true;      // an arrow key moves the selected box a pixel (Shift: ten)
+            if (keyData == Keys.Delete && !cropMode && Doc != null && (ActiveControl == preview || ActiveControl == list) && Selected != null) { DeleteStep(); return true; }      // the picture holds the focus while the pointer is over it, so the key is caught here, not by the list
             return base.ProcessCmdKey(ref msg, keyData);
         }
 

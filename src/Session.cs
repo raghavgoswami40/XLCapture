@@ -315,6 +315,8 @@ namespace SnapLite
                     var tp = r.ContainsKey("textPos") ? r["textPos"] as Dictionary<string, object> : null;
                     if (tp != null) { try { s.TextPos = new PointF(Convert.ToSingle(tp["x"]), Convert.ToSingle(tp["y"])); } catch { } }
                     if (s.Kind == "manual") { s.Kind = "click"; s.Manual = true; }
+                    // sessions recorded while following a procedure used to carry the procedure's action wording as the step text: the step text is what was clicked now
+                    if (!s.Manual && !s.StepTextEdited && s.ActionCode.Length > 0) s.StepText = null;
                     object ts; if (r.TryGetValue("ts", out ts) && ts != null) try { s.Ts = Convert.ToInt64(ts); } catch { }
                     if (bl != null)
                     {

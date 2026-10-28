@@ -263,6 +263,45 @@ namespace SnapLite
             return 0;
         }
 
+        // the editor's Share and Copy buttons work while a session is open, and the session's own toolbar has Crop after Appearance and no Export. args: --session-ribbon-test <log> <session.clicktrail> <folder>
+        public static int SessionRibbonTest(string[] args)
+        {
+            var log = new System.Text.StringBuilder(); bool all = true;
+            Action<bool, string> chk = delegate(bool ok, string what) { log.AppendLine((ok ? "PASS " : "FAIL ") + what); if (!ok) all = false; };
+            try
+            {
+                Settings.Folder = args[3]; var hub = new Hub(); hub.Show(); Application.DoEvents();
+                EditorForm.ShowSession(args[2]); var f = EditorForm.Main; Application.DoEvents(); System.Threading.Thread.Sleep(800); Application.DoEvents();
+                var nb = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                var share = (ToolStripDropDownButton)typeof(EditorForm).GetField("shareBtn", nb).GetValue(f); var copy = (ToolStripButton)typeof(EditorForm).GetField("copyAllBtn", nb).GetValue(f);
+                chk(share.Enabled && copy.Enabled, "Share and Copy are enabled while a session is open");
+                var texts = share.DropDownItems.Cast<ToolStripItem>().Select(i => i.Text).ToList();
+                chk(texts.Contains("Pictures...") && texts.Contains("PDF guide...") && texts.Contains("Share session..."), "Share offers the session's choices (" + string.Join(" | ", texts.ToArray()) + ")");
+                try { Clipboard.Clear(); } catch { } copy.PerformClick(); Application.DoEvents();
+                chk(Clipboard.ContainsImage(), "Copy puts the screen on the clipboard");
+                var sv = (SessionView)typeof(EditorForm).GetField("sessionView", nb).GetValue(f); var tools = (Panel)typeof(SessionView).GetField("tools", nb).GetValue(sv);
+                var buttons = tools.Controls.Cast<Control>().SelectMany(c => c is FlowLayoutPanel ? c.Controls.Cast<Control>() : new[] { c }).OfType<FlatButton>().ToList();
+                var left = tools.Controls.OfType<FlowLayoutPanel>().First(p => p.Dock == DockStyle.Left).Controls.OfType<FlatButton>().Select(b => b.Text).ToList(); int ia = left.IndexOf("Appearance");
+                chk(ia >= 0 && left.IndexOf("Crop") == ia + 1, "Crop comes right after Appearance (" + string.Join(", ", left.ToArray()) + ")");
+                chk(!buttons.Any(b => b.Text == "Export"), "the session toolbar has no Export button");
+                chk(copy.Text == "Copy", "the button beside Share is called Copy (" + copy.Text + ")");
+                var undoB = (ToolStripButton)typeof(EditorForm).GetField("undoBtn", nb).GetValue(f); var redoB = (ToolStripButton)typeof(EditorForm).GetField("redoBtn", nb).GetValue(f);
+                chk(!undoB.Enabled && !redoB.Enabled, "Undo and Redo at the top wait for a change in a freshly opened session");
+                typeof(SessionView).GetMethod("Push", nb, null, Type.EmptyTypes, null).Invoke(sv, null); Application.DoEvents();
+                chk(undoB.Enabled && !redoB.Enabled, "after a change Undo is enabled");
+                undoB.PerformClick(); Application.DoEvents();
+                chk(!undoB.Enabled && redoB.Enabled, "the top Undo button undoes it and Redo becomes enabled");
+                redoB.PerformClick(); Application.DoEvents();
+                chk(undoB.Enabled && !redoB.Enabled, "the top Redo button does it again");
+                typeof(EditorForm).GetMethod("SetSessionMode", nb).Invoke(f, new object[] { false });
+                var texts2 = share.DropDownItems.Cast<ToolStripItem>().Select(i => i.Text).ToList();
+                chk(texts2.Count > 0 && !texts2.Contains("Pictures...") && !texts2.Contains("Share session..."), "after leaving the session Share offers the picture's choices again (" + string.Join(" | ", texts2.ToArray()) + ")");
+                sv.Doc.Dirty = false; hub.Quit();
+            }
+            catch (Exception ex) { chk(false, "THROWN " + ex); }
+            log.AppendLine(all ? "ALL PASSED" : "SOME FAILED"); File.WriteAllText(args[1], log.ToString()); return all ? 0 : 1;
+        }
+
         // the picture and video modes pick the way a session does: a click takes the highlighted window or pane, a drag takes the area drawn. args: --smartpick-test <log>
         public static int SmartPickTest(string[] args)
         {
@@ -419,6 +458,47 @@ namespace SnapLite
             mouse("PreviewDown", bs); mouse("PreviewMove", new Point(bs.X - 30, bs.Y - 20)); mouse("PreviewUp", new Point(bs.X - 30, bs.Y - 20));
             check(s0.BadgePos.HasValue && s0.BadgePos.Value.X < bc.X - 10, "move the number by dragging it: " + bc + " to " + s0.BadgePos);
             call("Undo", null); call("Undo", null); call("Undo", null); check(!s0.BadgePos.HasValue && s0.Box == doc.Steps[0].Box, "three undos put the box and number back");
+
+            // the other three corners resize the box too, the opposite corner staying where it is
+            foreach (int corner in new[] { 0, 1, 2 })
+            {
+                pick(s0); var b0 = s0.Box; var hp = toScreen(new PointF(corner % 2 == 0 ? b0.X : b0.Right, corner < 2 ? b0.Y : b0.Bottom));
+                int mx = corner % 2 == 0 ? -20 : 20, my = corner < 2 ? -10 : 10;
+                mouse("PreviewDown", hp); mouse("PreviewMove", new Point(hp.X + mx, hp.Y + my)); mouse("PreviewUp", new Point(hp.X + mx, hp.Y + my));
+                bool grew = corner == 0 ? s0.Box.X < b0.X && s0.Box.Y < b0.Y && s0.Box.Right == b0.Right && s0.Box.Bottom == b0.Bottom
+                    : corner == 1 ? s0.Box.Right > b0.Right && s0.Box.Y < b0.Y && s0.Box.X == b0.X && s0.Box.Bottom == b0.Bottom
+                    : s0.Box.X < b0.X && s0.Box.Bottom > b0.Bottom && s0.Box.Right == b0.Right && s0.Box.Y == b0.Y;
+                check(grew, "resize the box from its " + new[] { "top left", "top right", "bottom left" }[corner] + " corner: " + b0 + " to " + s0.Box);
+                call("Undo", null);
+            }
+            // the four corners show only while the pointer is over a box, and not while the box's roundness is being set
+            var cornersMethod = typeof(SessionView).GetMethod("CornersShownFor", fl); Func<SessionStep> cornersNow = delegate { return (SessionStep)cornersMethod.Invoke(v, null); };
+            pick(s0); mouse("PreviewMove", new Point(1, 1)); check(cornersNow() == null, "no corners while the pointer is not over a box");
+            var overBox = toScreen(new PointF(s0.Box.X + s0.Box.Width / 2f, s0.Box.Y + 5)); mouse("PreviewMove", overBox); check(cornersNow() == s0, "the four corners show while the pointer is over the box");
+            mouse("PreviewMove", new Point(1, 1)); check(cornersNow() == null, "and go again when it leaves");
+            string shapeWas = doc.BoxShape; doc.BoxShape = "rounded"; pick(s0);
+            var dot = (RectangleF)call("RoundHandle", new object[] { s0 }); var dotAt = toScreen(new PointF(dot.X + dot.Width / 2, dot.Y + dot.Height / 2));
+            mouse("PreviewMove", dotAt); check(cornersNow() == s0, "the corners show with the pointer on the roundness dot");
+            mouse("PreviewDown", dotAt); mouse("PreviewMove", new Point(dotAt.X - 12, dotAt.Y)); check(cornersNow() == null, "the corners are gone while the roundness is being changed");
+            mouse("PreviewUp", new Point(dotAt.X - 12, dotAt.Y)); doc.BoxShape = shapeWas; call("Undo", null);
+            // the arrow keys move the selected box a pixel (Shift: ten); a run of presses is one change to undo
+            pick(s0); v.ActiveControl = preview; var arrowBox = s0.Box; Func<Keys, bool> arrow = delegate(Keys k) { return (bool)typeof(SessionView).GetMethod("ProcessCmdKey", fl).Invoke(v, new object[] { new Message(), k }); };
+            bool aR = arrow(Keys.Right); arrow(Keys.Right); arrow(Keys.Right); bool aD = arrow(Keys.Down | Keys.Shift);
+            check(aR && aD && s0.Box.X == arrowBox.X + 3 && s0.Box.Y == arrowBox.Y + 10 && s0.Box.Size == arrowBox.Size, "arrow keys nudge the box: " + arrowBox + " to " + s0.Box);
+            arrow(Keys.Left); check(s0.Box.X == arrowBox.X + 2, "the left arrow moves it back a pixel");
+            call("Undo", null); check(s0.Box == arrowBox, "one undo takes the whole run of arrow presses back (" + s0.Box + ")");
+            call("Redo", null); check(s0.Box.X == arrowBox.X + 2 && s0.Box.Y == arrowBox.Y + 10, "redo does the run again (" + s0.Box + ")");
+            call("Undo", null);
+            var topLeft = new Rectangle(0, 0, s0.Box.Width, s0.Box.Height); s0.Box = topLeft; arrow(Keys.Left); arrow(Keys.Up); check(s0.Box.Location == Point.Empty, "the box stays inside the picture"); s0.Box = arrowBox;
+            // Delete removes the selected step, whether the list or the picture holds the focus
+            var listCtl = (ListBox)typeof(SessionView).GetField("list", fl).GetValue(v);
+            foreach (var holder in new Control[] { preview, listCtl })
+            {
+                int n0 = doc.Steps.Count; pick(doc.Steps[1]); v.ActiveControl = holder;
+                var keyArgs = new object[] { new Message(), Keys.Delete }; bool handled = (bool)typeof(SessionView).GetMethod("ProcessCmdKey", fl).Invoke(v, keyArgs);
+                check(handled && doc.Steps.Count == n0 - 1, "Delete removes the selected step with the " + (holder == preview ? "picture" : "list") + " holding the focus (" + n0 + " to " + doc.Steps.Count + " steps)");
+                call("Undo", null);
+            }
 
             show(1); int stepsBefore = doc.Steps.Count; int screensBefore = doc.Groups().Count; call("DeleteScreen", null);
             check(doc.Groups().Count == screensBefore - 1 && doc.Steps.Count < stepsBefore, "delete screenshot removes the screen and its steps");
@@ -689,6 +769,14 @@ namespace SnapLite
             // a preset the person saves also holds the font, its size and its weight, and applying it sets them
             Settings.ColorPresets.Add(new[] { "Test font preset", "#112233", "#445566", "#778899", "Georgia", "20", "bold" }); Settings.Save(); Settings.ColorPresets.Clear(); Settings.Load();
             chk("a preset with a font is saved and comes back (font, size, weight)", Settings.ColorPresets.Any(p => p[0] == "Test font preset" && p.Length == 7 && p[4] == "Georgia" && p[5] == "20" && p[6] == "bold"));
+            // a preset set as the default is what a new recording starts with, and the choice is remembered
+            Settings.DefaultLookPreset = "Test font preset"; Settings.Save(); Settings.DefaultLookPreset = ""; Settings.Load();
+            chk("the default preset is saved and comes back", Settings.DefaultLookPreset == "Test font preset");
+            var fresh = new SessionDoc { Id = "d", Name = "d" }; SessionLookForm.ApplyDefaultPreset(fresh);
+            chk("a new recording starts with the default preset (" + fresh.TextFont + " " + fresh.TextSize + " " + fresh.TextWeight + ")", fresh.BoxColor.ToArgb() == Color.FromArgb(0x11, 0x22, 0x33).ToArgb() && fresh.StepColor.ToArgb() == Color.FromArgb(0x44, 0x55, 0x66).ToArgb() && fresh.TextColor.ToArgb() == Color.FromArgb(0x77, 0x88, 0x99).ToArgb() && fresh.TextFont == "Georgia" && fresh.TextSize == 20 && fresh.TextWeight == "bold");
+            Settings.DefaultLookPreset = "Gone"; var plain = new SessionDoc { Id = "e", Name = "e" }; SessionLookForm.ApplyDefaultPreset(plain);
+            chk("a default that no longer exists changes nothing", plain.BoxColor.ToArgb() == new SessionDoc().BoxColor.ToArgb() && plain.TextFont == "Segoe UI");
+            Settings.DefaultLookPreset = ""; Settings.Save();
             Settings.ColorPresets.RemoveAll(p => p[0] == "Test font preset");
             back.TextFont = "Georgia"; back.TextSize = 20; back.TextWeight = "bold";
             using (var lf = new SessionLookForm(back, delegate { }))
@@ -778,7 +866,7 @@ namespace SnapLite
                 var act = SampleActivity(); SessionRecorder.BeginPlan(act);
                 Func<string, string, SessionStep> click = (label, kind) => new SessionStep { Kind = kind, Label = label };
                 var s1 = click("Login", "click"); bool tc = SessionRecorder.Tag(s1);
-                chk("a click that names nothing goes with the first action of the open task and ticks nothing (" + s1.ActionCode + ")", s1.ActionCode == "2.1.1" && s1.StepText == "Log into InEight Platform" && SessionRecorder.DoneCount == 0 && tc);
+                chk("a click that names nothing goes with the first action of the open task and ticks nothing (" + s1.ActionCode + ")", s1.ActionCode == "2.1.1" && string.IsNullOrWhiteSpace(s1.StepText) && SessionRecorder.DoneCount == 0 && tc);
                 var s2 = click("Menu", "click"); SessionRecorder.Tag(s2);
                 chk("a click on \"Menu\" is the hamburger menu action (" + s2.ActionCode + ")", s2.ActionCode == "2.1.2" && SessionRecorder.DoneCount == 0);
                 var sc = click("", "scroll"); SessionRecorder.Tag(sc);
@@ -830,6 +918,18 @@ namespace SnapLite
                 chk("starting again leaves no steps, nothing ticked and the first task open (" + SessionRecorder.Count + " steps, " + SessionRecorder.DoneCount + " ticked, task " + SessionRecorder.TaskPos + ")", SessionRecorder.Count == 0 && SessionRecorder.DoneCount == 0 && SessionRecorder.TaskPos == 0);
                 var s8 = click("", "click"); SessionRecorder.Tag(s8);
                 chk("after starting again the first click goes with the first action (" + s8.ActionCode + ")", s8.ActionCode == "2.1.1");
+                // a session recorded earlier while following a procedure carried the action wording as its step text: it shows what was clicked now, unless the person edited it
+                string migPath = Path.Combine(Path.GetTempPath(), "xlc-migrate-" + Guid.NewGuid().ToString("N") + ".clicktrail");
+                try
+                {
+                    var mig = new SessionDoc { Id = "mig", Name = "mig" };
+                    mig.Steps.Add(new SessionStep { Label = "Save", Role = "Button", Task = "2.1 Duplicate estimate", ActionCode = "2.1.1", StepText = "Log into InEight Platform" });
+                    mig.Steps.Add(new SessionStep { Label = "Save", Role = "Button", Task = "2.1 Duplicate estimate", ActionCode = "2.1.2", StepText = "My own wording", StepTextEdited = true });
+                    mig.Save(migPath); var migBack = SessionDoc.Load(migPath);
+                    chk("an older procedure session shows what was clicked, not the action wording (" + migBack.Steps[0].Plain + ")", migBack.Steps[0].Plain.StartsWith("Click"));
+                    chk("text the person edited is kept (" + migBack.Steps[1].Plain + ")", migBack.Steps[1].Plain == "My own wording");
+                }
+                finally { try { File.Delete(migPath); } catch { } }
             }
             catch (Exception ex) { log.AppendLine("FAIL THROWN " + ex); all = false; }
             log.AppendLine(all ? "ALL PASSED" : "SOME FAILED"); File.WriteAllText(args[1], log.ToString()); return all ? 0 : 1;
@@ -1139,7 +1239,10 @@ namespace SnapLite
                 var list = (Control)typeof(SessionView).GetField("list", nb).GetValue(sv);
                 menu.Show(list, new Point(60, 80)); for (int i = 0; i < 25; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(40); } where = "second picture";       // the menu fades in: wait until it is solid
                 using (var b = Shot(f)) b.Save(args[1] + "-menu.png", ImageFormat.Png);
-                menu.Close(); sv.Doc.Dirty = false; where = "quit"; log.AppendLine("done"); File.WriteAllText(args[1] + ".txt", log.ToString()); hub.Quit();
+                menu.Close(); where = "share menu";
+                var shareBtn = (ToolStripDropDownButton)typeof(EditorForm).GetField("shareBtn", nb).GetValue(f); shareBtn.ShowDropDown(); for (int i = 0; i < 25; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(40); }
+                using (var b = Shot(f)) b.Save(args[1] + "-share.png", ImageFormat.Png); shareBtn.HideDropDown();
+                sv.Doc.Dirty = false; where = "quit"; log.AppendLine("done"); File.WriteAllText(args[1] + ".txt", log.ToString()); hub.Quit();
             }
             catch (Exception ex) { log.AppendLine("FAILED at " + where + ": " + ex); File.WriteAllText(args[1] + ".txt", log.ToString()); return 1; }
             return 0;

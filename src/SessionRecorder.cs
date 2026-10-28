@@ -77,9 +77,8 @@ namespace SnapLite
                 else { for (int j = 0; j < n; j++) if (used[start + j]) use = j; if (use < 0) use = 0; }
                 pa = tk.Actions[use];
             }
-            // the step carries its task and action; the first step of an action also carries its text
-            string name = tk.Full; s.Task = name; s.ActionCode = pa.Code;
-            if (pa.Code != lastAction) { s.StepText = pa.Text; lastAction = pa.Code; }
+            // the step carries its task and action (the checklist and the grouping use them); its text stays the one made from what was clicked
+            string name = tk.Full; s.Task = name; s.ActionCode = pa.Code; lastAction = pa.Code;
             bool change = name != lastTask; lastTask = name; return change;
         }
         // does what was clicked (its label) appear in the action's text?
@@ -145,6 +144,7 @@ namespace SnapLite
         {
             bool resuming = resumeDoc != null;
             doc = resuming ? resumeDoc : new SessionDoc { Id = SessionDoc.NewId(), StartedAt = DateTime.Now, Name = "Session " + DateTime.Now.ToString("yyyy-MM-dd HH.mm") };
+            if (!resuming) SessionLookForm.ApplyDefaultPreset(doc);      // a new recording starts with the preset the person set as the default
             if (groupFrame != null) { groupFrame.Dispose(); } groupFrame = null; groupArea = Rectangle.Empty; anchors.Clear(); lastWindowKey = null; dirty = null; lastStepRid = null; gesture = null; lastScrollDir = null;
             plan = null; tasks = null; done = used = null; taskPos = 0; lastAction = ""; lastTask = "";
             if (Activity != null)

@@ -15,13 +15,14 @@ namespace SnapLite
         class Row { public ProcAction Action; public int Index; }
         readonly ProcActivity act; readonly List<ProcTask> tasks; readonly ListBox list; readonly Panel header, pager; readonly FlatButton prev, next, pause, stop;
         readonly List<Rectangle> segments = new List<Rectangle>(); readonly List<Row> rows = new List<Row>(); int shown = -1;
-        public static int? PreviewSteps;     // for the pictures the checks take
+        Rectangle workArea;
+        public static int? PreviewSteps;    // for the pictures the checks take
 
         public ChecklistForm(ProcActivity act, Screen screen)
         {
             this.act = act; Text = "Checklist  " + act.Title; FormBorderStyle = FormBorderStyle.SizableToolWindow; ShowInTaskbar = false; TopMost = true; StartPosition = FormStartPosition.Manual; BackColor = Theme.Sheet; Font = Theme.Body(10f);
             // laid out in the startup scale; Windows stretches it to this monitor's, so the monitor's work area is measured in layout pixels
-            var wa = Dpi.WorkAreaV(screen);
+            var wa = Dpi.WorkAreaV(screen); workArea = wa;
             int w = Math.Min(Dpi.S(520), Math.Max(Dpi.S(380), wa.Width / 3));
             Bounds = new Rectangle(wa.Right - w - Dpi.S(12), wa.Y + Dpi.S(12), w, wa.Height - Dpi.S(24));
             tasks = SessionRecorder.Tasks ?? act.Tasks.Where(t => t.Actions.Count > 0).ToList();
@@ -30,18 +31,18 @@ namespace SnapLite
             pager = new Panel { Dock = DockStyle.Top, Height = Dpi.S(150), BackColor = Theme.Sheet }; EnableDoubleBuffer(pager); pager.Paint += PaintPager; pager.MouseDown += PagerClicked;
             list = new ListBox { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, DrawMode = DrawMode.OwnerDrawVariable, BackColor = Color.White, IntegralHeight = false, AccessibleName = "Actions of this task" };
             list.MeasureItem += Measure; list.DrawItem += Draw; list.MouseDown += Clicked;
-            var foot = new Panel { Dock = DockStyle.Bottom, Height = Dpi.S(248), BackColor = Theme.Sheet };
+            var foot = new Panel { Dock = DockStyle.Bottom, Height = Dpi.S(196), BackColor = Theme.Sheet };
             foot.Paint += delegate(object s, PaintEventArgs e) { using (var p = new Pen(Theme.Rule)) e.Graphics.DrawLine(p, 0, 0, foot.Width, 0); };
-            prev = new FlatButton("Previous task", false) { Location = new Point(Dpi.S(16), Dpi.S(14)), Size = Dpi.S(172, 40), Icon = Ic.Prev };
-            next = new FlatButton("Next task", true) { Location = new Point(Dpi.S(198), Dpi.S(14)), Size = Dpi.S(172, 40), Icon = Ic.Chevron };
-            pause = new FlatButton("Pause", false) { Location = new Point(Dpi.S(16), Dpi.S(72)), Size = Dpi.S(172, 40), Icon = Ic.Pause };
-            stop = new FlatButton("Stop", true) { Location = new Point(Dpi.S(198), Dpi.S(72)), Size = Dpi.S(172, 40), Icon = Ic.Stop, Tone = Theme.Mark };
+            prev = new FlatButton("Previous task", false) { Location = new Point(Dpi.S(16), Dpi.S(12)), Size = Dpi.S(172, 36), Icon = Ic.Prev };
+            next = new FlatButton("Next task", true) { Location = new Point(Dpi.S(198), Dpi.S(12)), Size = Dpi.S(172, 36), Icon = Ic.Chevron };
+            pause = new FlatButton("Pause", false) { Location = new Point(Dpi.S(16), Dpi.S(56)), Size = Dpi.S(172, 36), Icon = Ic.Pause };
+            stop = new FlatButton("Stop", true) { Location = new Point(Dpi.S(198), Dpi.S(56)), Size = Dpi.S(172, 36), Icon = Ic.Stop, Tone = Theme.Mark };
             prev.Click += delegate { SessionRecorder.MoveTask(-1); }; next.Click += delegate { SessionRecorder.MoveTask(1); };
             pause.Click += delegate { SessionRecorder.TogglePause(); }; stop.Click += delegate { SessionRecorder.Stop(); };
-            var swap = new FlatButton("Switch window", false) { Location = new Point(Dpi.S(16), Dpi.S(130)), Size = Dpi.S(354, 40), Icon = Ic.Fit };
+            var swap = new FlatButton("Switch window", false) { Location = new Point(Dpi.S(16), Dpi.S(100)), Size = Dpi.S(354, 36), Icon = Ic.Fit };
             swap.Click += delegate { SessionRecorder.SwitchWindow(); };
-            var again = new FlatButton("Start again", false) { Location = new Point(Dpi.S(16), Dpi.S(188)), Size = Dpi.S(172, 40), Icon = Ic.Reset };
-            var cancel = new FlatButton("Cancel recording", false) { Location = new Point(Dpi.S(198), Dpi.S(188)), Size = Dpi.S(172, 40), Icon = Ic.Close };
+            var again = new FlatButton("Start again", false) { Location = new Point(Dpi.S(16), Dpi.S(144)), Size = Dpi.S(172, 36), Icon = Ic.Reset };
+            var cancel = new FlatButton("Cancel recording", false) { Location = new Point(Dpi.S(198), Dpi.S(144)), Size = Dpi.S(172, 36), Icon = Ic.Close };
             again.Click += delegate { SessionRecorder.Restart(); }; cancel.Click += delegate { SessionRecorder.Cancel(); };
             var tip = new ToolTip { ShowAlways = true }; tip.SetToolTip(again, "Throw away the steps so far and start again (the checklist is unticked)"); tip.SetToolTip(cancel, "Throw this recording away: nothing is saved");
             foot.Controls.AddRange(new Control[] { prev, next, pause, stop, swap, again, cancel });
@@ -67,6 +68,19 @@ namespace SnapLite
             int first = FirstIndexOf(task);
             for (int k = 0; k < tasks[task].Actions.Count; k++) rows.Add(new Row { Action = tasks[task].Actions[k], Index = first + k });
             foreach (var r in rows) list.Items.Add(r);
+            FitToTask();
+        }
+        // the page is as short as its title needs, and the window grows (never past the screen) until every action of the task shows
+        void FitToTask()
+        {
+            var t = tasks[Math.Max(0, Math.Min(tasks.Count - 1, shown))];
+            int tw = Math.Max(Dpi.S(120), pager.Width - Dpi.S(36));
+            using (var f = Theme.Semi(14f)) pager.Height = Dpi.S(70) + Math.Min(Dpi.S(72), TextRenderer.MeasureText(t.Full, f, new Size(tw, 2000), TextFormatFlags.NoPadding | TextFormatFlags.WordBreak).Height) + Dpi.S(14);
+            PerformLayout(); int need = 0; for (int i = 0; i < rows.Count; i++) need += RowHeight(rows[i]);
+            int lack = need - list.ClientSize.Height; if (lack <= 0) return;
+            int room = workArea.Bottom - Dpi.S(12) - Bottom, up = Math.Max(0, Top - (workArea.Y + Dpi.S(12)));
+            int grow = Math.Min(lack, room + up); if (grow <= 0) return;
+            int down = Math.Min(grow, Math.Max(0, room)); Bounds = new Rectangle(Left, Top - (grow - down), Width, Height + grow);
         }
 
         // ---- the header: the activity, whether it is recording, and the step count
@@ -98,7 +112,7 @@ namespace SnapLite
                 bool open = i == pos, finished = tasks[i].Actions.Count > 0 && Ticked(i) == tasks[i].Actions.Count;
                 using (var p = Theme.RoundRect(r, h / 2f)) using (var b = new SolidBrush(open ? Theme.Accent : finished ? Theme.Charcoal : Theme.Rule)) g.FillPath(b, p);
             }
-            using (var f = Theme.Semi(14f)) TextRenderer.DrawText(g, t.Full, f, new Rectangle(Dpi.S(18), Dpi.S(70), W - Dpi.S(36), Dpi.S(66)), Theme.Ink, TextFormatFlags.NoPadding | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+            using (var f = Theme.Semi(14f)) TextRenderer.DrawText(g, t.Full, f, new Rectangle(Dpi.S(18), Dpi.S(70), W - Dpi.S(36), pager.Height - Dpi.S(80)), Theme.Ink, TextFormatFlags.NoPadding | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
             using (var p = new Pen(Theme.Rule)) g.DrawLine(p, 0, pager.Height - 1, W, pager.Height - 1);
         }
         void PagerClicked(object s, MouseEventArgs e)
@@ -110,9 +124,12 @@ namespace SnapLite
         int TextWidth { get { return Math.Max(Dpi.S(120), list.ClientSize.Width - Dpi.S(110)); } }
         void Measure(object s, MeasureItemEventArgs e)
         {
-            var r = rows[e.Index];
+            e.ItemHeight = RowHeight(rows[e.Index]);
+        }
+        int RowHeight(Row r)
+        {
             int h = TextRenderer.MeasureText(r.Action.Text ?? "", Theme.Body(10.5f), new Size(TextWidth, 2000), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height;
-            e.ItemHeight = Math.Max(Dpi.S(48), h + Dpi.S(26));
+            return Math.Max(Dpi.S(48), h + Dpi.S(26));
         }
         void Draw(object s, DrawItemEventArgs e)
         {
